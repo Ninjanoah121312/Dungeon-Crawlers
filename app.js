@@ -308,6 +308,7 @@ function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&
 // ---------- dashboard screen ----------
 async function enterDashboard() {
   showScreen("screen-dashboard");
+  ticketsCache = []; // clear any previous server's tickets before loading this one's
   const session = getSession();
   document.getElementById("dash-user-chip").innerHTML = `<img src="${avatarUrl(session.user)}" alt=""> ${session.user.username}`;
   document.getElementById("dash-server-name").textContent = currentGuild.name;
@@ -399,9 +400,12 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("btn-login").addEventListener("click", (e) => { e.preventDefault(); beginLogin(); });
   document.getElementById("btn-invite").addEventListener("click", (e) => {
     e.preventDefault();
-    window.open(`https://discord.com/oauth2/authorize?${new URLSearchParams({
-      client_id: CFG.DISCORD_CLIENT_ID, permissions: CFG.BOT_PERMISSIONS, scope: "bot applications.commands",
-    })}`, "_blank");
+    const params = new URLSearchParams({
+      client_id: CFG.DISCORD_CLIENT_ID,
+      permissions: CFG.BOT_PERMISSIONS,
+      scope: "bot applications.commands",
+    });
+    window.open(`https://discord.com/oauth2/authorize?${params.toString()}`, "_blank");
   });
   document.getElementById("btn-logout").addEventListener("click", () => { clearSession(); showScreen("screen-landing"); });
   document.getElementById("btn-logout2").addEventListener("click", () => { clearSession(); showScreen("screen-landing"); });
