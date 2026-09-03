@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ticket Desk — dashboard</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body class="dashboard-body">
+  <div class="app-shell">
+    <aside class="guild-rail" id="guild-rail">
+      <div class="guild-rail-header">
+        <span class="brand-mark">◧</span>
+      </div>
+      <div class="guild-list" id="guild-list">
+        <!-- populated by dashboard.js -->
+      </div>
+      <button class="rail-logout" id="logout-btn" title="Log out">⏻</button>
+    </aside>
+
+    <main class="content">
+      <div id="empty-state" class="empty-state">
+        <h2>Pick a server</h2>
+        <p>Choose a server from the left to configure its ticket setup.</p>
+      </div>
+
+      <div id="guild-panel" class="guild-panel hidden">
+        <header class="content-header">
+          <div>
+            <h1 id="guild-name">—</h1>
+            <span class="status-pill" id="bot-status-pill">checking…</span>
+          </div>
+          <button id="save-btn" class="btn btn-primary">Save changes</button>
+        </header>
+
+        <div id="invite-banner" class="invite-banner hidden">
+          <p>The bot isn't in this server yet. Add it, then come back here to finish setup.</p>
+          <a id="invite-link" class="btn btn-primary" href="#" target="_blank" rel="noopener">Add bot to server</a>
+        </div>
+
+        <div id="config-sections" class="config-sections hidden">
+          <section class="panel">
+            <h2>Ticket category</h2>
+            <p class="panel-hint">New ticket channels are created inside this category.</p>
+            <select id="category-select"></select>
+          </section>
+
+          <section class="panel">
+            <h2>Welcome message</h2>
+            <p class="panel-hint">Shown on the ticket panel and inside every new ticket.</p>
+            <textarea id="welcome-message" rows="3"></textarea>
+          </section>
+
+          <section class="panel">
+            <h2>Support roles</h2>
+            <p class="panel-hint">These roles can see, claim, and close tickets.</p>
+            <div id="support-roles-list" class="chip-list"></div>
+            <select id="add-role-select"><option value="">+ Add a role…</option></select>
+          </section>
+
+          <section class="panel">
+            <h2>Ticket types</h2>
+            <p class="panel-hint">Each one becomes a button on the ticket-opening panel (up to 5).</p>
+            <div id="ticket-types-list" class="ticket-types-list"></div>
+            <button id="add-type-btn" class="btn btn-secondary btn-small">+ Add ticket type</button>
+          </section>
+
+          <section class="panel">
+            <h2>Recent tickets</h2>
+            <div id="tickets-table-wrap">
+              <table class="tickets-table" id="tickets-table">
+                <thead>
+                  <tr><th>Opened by</th><th>Type</th><th>Status</th><th>Opened</th></tr>
+                </thead>
+                <tbody id="tickets-tbody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <template id="ticket-type-row-template">
+    <div class="ticket-type-row">
+      <input type="text" class="tt-emoji" maxlength="4" placeholder="🎫" />
+      <input type="text" class="tt-label" placeholder="Label, e.g. Billing Support" />
+      <input type="text" class="tt-description" placeholder="Short description shown inside the ticket" />
+      <button class="tt-remove" title="Remove">✕</button>
+    </div>
+  </template>
+
+  <script src="js/config.js"></script>
+  <script src="js/dashboard.js"></script>
+</body>
+</html>
