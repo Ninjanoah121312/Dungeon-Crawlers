@@ -7,12 +7,12 @@
 window.TICKET_KEEPER_CONFIG = {
   // Your Discord application's Client ID (found on the Discord Developer
   // Portal -> your app -> OAuth2 -> General). This is PUBLIC, not secret.
-  DISCORD_CLIENT_ID: "YOUR_DISCORD_CLIENT_ID",
+  DISCORD_CLIENT_ID: "1545012669113827488",
 
   // Must exactly match a redirect URL you added in the Discord Developer
   // Portal -> OAuth2 -> Redirects. When hosted on GitHub Pages this will
   // look like: https://<your-username>.github.io/<repo-name>/
-  REDIRECT_URI: "https://YOUR_USERNAME.github.io/YOUR_REPO/",
+  REDIRECT_URI: "https://ninjanoah121312.github.io/Dungeon-Crawlers/",
 
   // Scopes requested during login.
   OAUTH_SCOPES: ["identify", "guilds"],
