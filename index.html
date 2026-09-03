@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ticket Keeper — Discord Ticket Management</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============ LANDING ============ -->
+<section id="screen-landing" class="screen active">
+  <div class="landing-wrap">
+    <div>
+      <div class="brand-row">
+        <div class="brand-glyph">TK</div>
+        Ticket Keeper
+      </div>
+      <h1 class="landing-title">Support tickets that<br><span class="accent">never fall through</span></h1>
+      <p class="landing-sub">
+        Invite the bot, log in with Discord, and manage every open ticket across your servers
+        from one dashboard. No paid hosting, no black-box automation — you run the bot, you own the data.
+      </p>
+      <div class="landing-actions">
+        <a href="#" id="btn-invite" class="btn btn-primary">
+          <span>＋</span> Invite to server
+        </a>
+        <a href="#" id="btn-login" class="btn btn-ghost">
+          Open dashboard
+        </a>
+      </div>
+      <div class="stat-row">
+        <div>
+          <div class="stat-num" id="stat-servers">—</div>
+          <div class="stat-label">Servers reachable</div>
+        </div>
+        <div>
+          <div class="stat-num" id="stat-open">—</div>
+          <div class="stat-label">Open tickets tracked</div>
+        </div>
+        <div>
+          <div class="stat-num" id="stat-status">—</div>
+          <div class="stat-label">Bot status</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hud-panel">
+      <div class="hud-title-row">
+        <span class="hud-title">SYSTEM STATUS</span>
+        <span class="status-pip checking" id="hero-status-pip"><span class="status-dot"></span>Checking…</span>
+      </div>
+      <div class="mini-card">
+        <div class="mini-card-label">Local bot connection</div>
+        <div class="mini-card-val" id="hero-bot-url">http://localhost:3001</div>
+        <div class="mini-card-grid">
+          <div>
+            <div class="mini-card-label">Guilds</div>
+            <div class="mini-card-val" id="hero-guild-count">—</div>
+          </div>
+          <div>
+            <div class="mini-card-label">Uptime</div>
+            <div class="mini-card-val" id="hero-uptime">—</div>
+          </div>
+          <div>
+            <div class="mini-card-label">Ticket module</div>
+            <span class="toggle-fake"></span>
+          </div>
+          <div>
+            <div class="mini-card-label">Data store</div>
+            <div class="mini-card-val">GitHub</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SERVER PICKER ============ -->
+<section id="screen-picker" class="screen">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="brand-glyph">TK</div>
+      <strong style="font-size:14px">Ticket Keeper</strong>
+    </div>
+    <div class="topbar-right">
+      <span class="status-pip checking" id="picker-status-pip"><span class="status-dot"></span>Checking…</span>
+      <div class="user-chip" id="picker-user-chip"></div>
+      <button class="btn btn-ghost btn-small" id="btn-logout">Log out</button>
+    </div>
+  </div>
+  <div class="picker-wrap">
+    <h1 class="picker-heading">Your servers</h1>
+    <p class="picker-sub">Servers where you have Manage Server permissions. Invite the bot to any that don't have it yet.</p>
+    <div id="local-banner-slot"></div>
+    <div class="server-grid" id="server-grid">
+      <div class="loading-text">Loading your servers…</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ DASHBOARD ============ -->
+<section id="screen-dashboard" class="screen">
+  <div class="topbar">
+    <div class="topbar-left">
+      <button class="btn btn-ghost btn-small" id="btn-back-picker">← Servers</button>
+    </div>
+    <div class="topbar-right">
+      <span class="status-pip checking" id="dash-status-pip"><span class="status-dot"></span>Checking…</span>
+      <div class="user-chip" id="dash-user-chip"></div>
+      <button class="btn btn-ghost btn-small" id="btn-logout2">Log out</button>
+    </div>
+  </div>
+
+  <div class="dash-body">
+    <nav class="dash-nav">
+      <div class="dash-nav-server">
+        <div class="server-icon" id="dash-server-icon">S</div>
+        <div class="dash-nav-server-name" id="dash-server-name">Server</div>
+      </div>
+      <div class="nav-item active" data-panel="overview"><span class="nav-item-dot"></span>Overview</div>
+      <div class="nav-item" data-panel="tickets"><span class="nav-item-dot"></span>Tickets</div>
+      <div class="nav-item" data-panel="config"><span class="nav-item-dot"></span>Ticket setup</div>
+    </nav>
+
+    <main class="dash-main">
+      <div id="local-banner-slot-dash"></div>
+
+      <!-- Overview panel -->
+      <div class="dash-panel" data-panel="overview">
+        <div class="dash-header">
+          <div>
+            <h1>Overview</h1>
+            <p>Live status pulled from your locally hosted bot.</p>
+          </div>
+        </div>
+        <div class="overview-grid">
+          <div class="overview-card"><div class="num" id="ov-open">—</div><div class="lbl">Open tickets</div></div>
+          <div class="overview-card"><div class="num" id="ov-pending">—</div><div class="lbl">Pending reply</div></div>
+          <div class="overview-card"><div class="num" id="ov-closed">—</div><div class="lbl">Closed (30d)</div></div>
+          <div class="overview-card"><div class="num" id="ov-members">—</div><div class="lbl">Server members</div></div>
+        </div>
+        <div class="config-section">
+          <h3>Bot connection</h3>
+          <div class="hint">Straight from your local bot.js instance — not stored anywhere else.</div>
+          <div class="config-row"><span class="config-row-label">Status</span><span class="status-pip checking" id="ov-bot-pip"><span class="status-dot"></span>Checking…</span></div>
+          <div class="config-row"><span class="config-row-label">Uptime</span><span class="config-row-sub" id="ov-uptime">—</span></div>
+          <div class="config-row"><span class="config-row-label">Ticket data source</span><span class="config-row-sub">GitHub: ticket_tool_data.json</span></div>
+        </div>
+      </div>
+
+      <!-- Tickets panel -->
+      <div class="dash-panel" data-panel="tickets" style="display:none">
+        <div class="dash-header">
+          <div>
+            <h1>Tickets</h1>
+            <p>All tickets synced from ticket_tool_data.json.</p>
+          </div>
+        </div>
+        <div class="ticket-toolbar">
+          <div class="ticket-filters">
+            <span class="filter-chip active" data-filter="all">All</span>
+            <span class="filter-chip" data-filter="open">Open</span>
+            <span class="filter-chip" data-filter="pending">Pending</span>
+            <span class="filter-chip" data-filter="closed">Closed</span>
+          </div>
+          <button class="btn btn-ghost btn-small" id="btn-refresh-tickets">↻ Refresh</button>
+        </div>
+        <div class="ticket-table" id="ticket-table">
+          <div class="ticket-row head">
+            <span>ID</span><span>Subject</span><span>Opened by</span><span class="col-created">Created</span><span>Status</span>
+          </div>
+          <div class="loading-text">Loading tickets…</div>
+        </div>
+      </div>
+
+      <!-- Config panel -->
+      <div class="dash-panel" data-panel="config" style="display:none">
+        <div class="dash-header">
+          <div>
+            <h1>Ticket setup</h1>
+            <p>Changes here are sent to your local bot, which writes them to GitHub.</p>
+          </div>
+        </div>
+        <div class="config-section">
+          <h3>Ticket channel</h3>
+          <div class="hint">Where the "open a ticket" panel is posted.</div>
+          <div class="config-row">
+            <span class="config-row-label">Channel</span>
+            <select id="cfg-channel"><option>#support</option></select>
+          </div>
+        </div>
+        <div class="config-section">
+          <h3>Ticket category</h3>
+          <div class="hint">New ticket channels are created under this category.</div>
+          <div class="config-row">
+            <span class="config-row-label">Category</span>
+            <select id="cfg-category"><option>Tickets</option></select>
+          </div>
+        </div>
+        <div class="config-section">
+          <h3>Support role</h3>
+          <div class="hint">This role can view and claim tickets.</div>
+          <div class="config-row">
+            <span class="config-row-label">Role</span>
+            <select id="cfg-role"><option>@Support</option></select>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-small" id="btn-save-config">Save changes</button>
+      </div>
+    </main>
+  </div>
+</section>
+
+<footer class="site-footer">Ticket Keeper runs on a bot you host yourself. This page never sees your bot token or client secret.</footer>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
