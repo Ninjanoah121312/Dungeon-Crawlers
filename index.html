@@ -75,7 +75,7 @@
   </div>
 
   <div class="dash-body">
-    <nav class="dash-nav">
+    <nav class="dash-nav" id="dash-nav">
       <div class="dash-nav-server">
         <div class="server-icon" id="dash-server-icon">S</div>
         <div>
@@ -83,16 +83,7 @@
           <div class="dash-nav-server-sub" id="dash-server-sub">—</div>
         </div>
       </div>
-      <div class="nav-section-label">Operations</div>
-      <div class="nav-item" data-panel="overview"><i class="ti ti-home" aria-hidden="true"></i>Overview</div>
-      <div class="nav-item" data-panel="tickets"><i class="ti ti-ticket" aria-hidden="true"></i>Tickets</div>
-      <div class="nav-item" data-panel="insights"><i class="ti ti-chart-bar" aria-hidden="true"></i>Insights</div>
-      <div class="nav-section-label">Configuration</div>
-      <div class="nav-item" data-panel="subjects"><i class="ti ti-tag" aria-hidden="true"></i>Subjects</div>
-      <div class="nav-item" data-panel="panels"><i class="ti ti-layout-board" aria-hidden="true"></i>Panels</div>
-      <div class="nav-item" data-panel="settings"><i class="ti ti-settings" aria-hidden="true"></i>Server settings</div>
-      <div class="nav-section-label">Advanced</div>
-      <div class="nav-item" data-panel="status"><i class="ti ti-activity" aria-hidden="true"></i>Status</div>
+      <div id="dash-nav-items"></div>
     </nav>
 
     <main class="dash-main">
@@ -105,6 +96,9 @@
 <footer class="site-footer">Dungeon Crawlers runs on a bot you host yourself. This page never sees your bot token or client secret.</footer>
 
 <script src="config.js"></script>
+<script src="modules/_registry.js"></script>
+<script src="modules/_dropdown.js"></script>
+<script src="modules/ticket-tool.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
