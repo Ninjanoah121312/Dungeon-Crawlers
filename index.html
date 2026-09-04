@@ -3,48 +3,24 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ticket Keeper — Discord Ticket Management</title>
+<title>Dungeon Crawlers — Ticket Module</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body data-theme="dark">
 
 <!-- ============ LANDING ============ -->
 <section id="screen-landing" class="screen active">
   <div class="landing-wrap">
     <div>
-      <div class="brand-row">
-        <div class="brand-glyph">TK</div>
-        Ticket Keeper
-      </div>
-      <h1 class="landing-title">Support tickets that<br><span class="accent">never fall through</span></h1>
-      <p class="landing-sub">
-        Invite the bot, log in with Discord, and manage every open ticket across your servers
-        from one dashboard. No paid hosting, no black-box automation — you run the bot, you own the data.
-      </p>
+      <div class="brand-row"><div class="brand-glyph">DC</div>Dungeon Crawlers</div>
+      <h1 class="landing-title">Tickets that<br><span class="accent">never fall through</span></h1>
+      <p class="landing-sub">Invite the bot, sign in with Discord, and manage every open ticket across your servers from one dashboard. No paid hosting — you run the bot, you own the data.</p>
       <div class="landing-actions">
-        <a href="#" id="btn-invite" class="btn btn-primary">
-          <span>＋</span> Invite to server
-        </a>
-        <a href="#" id="btn-login" class="btn btn-ghost">
-          Open dashboard
-        </a>
-      </div>
-      <div class="stat-row">
-        <div>
-          <div class="stat-num" id="stat-servers">—</div>
-          <div class="stat-label">Servers reachable</div>
-        </div>
-        <div>
-          <div class="stat-num" id="stat-open">—</div>
-          <div class="stat-label">Open tickets tracked</div>
-        </div>
-        <div>
-          <div class="stat-num" id="stat-status">—</div>
-          <div class="stat-label">Bot status</div>
-        </div>
+        <a href="#" id="btn-invite" class="btn btn-primary"><i class="ti ti-plus"></i> Invite to server</a>
+        <a href="#" id="btn-login" class="btn btn-ghost">Open dashboard</a>
       </div>
     </div>
-
     <div class="hud-panel">
       <div class="hud-title-row">
         <span class="hud-title">SYSTEM STATUS</span>
@@ -54,22 +30,10 @@
         <div class="mini-card-label">Local bot connection</div>
         <div class="mini-card-val" id="hero-bot-url">http://localhost:3001</div>
         <div class="mini-card-grid">
-          <div>
-            <div class="mini-card-label">Guilds</div>
-            <div class="mini-card-val" id="hero-guild-count">—</div>
-          </div>
-          <div>
-            <div class="mini-card-label">Uptime</div>
-            <div class="mini-card-val" id="hero-uptime">—</div>
-          </div>
-          <div>
-            <div class="mini-card-label">Ticket module</div>
-            <span class="toggle-fake"></span>
-          </div>
-          <div>
-            <div class="mini-card-label">Data store</div>
-            <div class="mini-card-val">GitHub</div>
-          </div>
+          <div><div class="mini-card-label">Guilds</div><div class="mini-card-val" id="hero-guild-count">—</div></div>
+          <div><div class="mini-card-label">Uptime</div><div class="mini-card-val" id="hero-uptime">—</div></div>
+          <div><div class="mini-card-label">Bot tag</div><div class="mini-card-val" id="hero-bot-tag">—</div></div>
+          <div><div class="mini-card-label">Data store</div><div class="mini-card-val">GitHub</div></div>
         </div>
       </div>
     </div>
@@ -79,11 +43,9 @@
 <!-- ============ SERVER PICKER ============ -->
 <section id="screen-picker" class="screen">
   <div class="topbar">
-    <div class="topbar-left">
-      <div class="brand-glyph">TK</div>
-      <strong style="font-size:14px">Ticket Keeper</strong>
-    </div>
+    <div class="topbar-left"><div class="brand-glyph">DC</div><strong style="font-size:13.5px">Dungeon Crawlers</strong></div>
     <div class="topbar-right">
+      <button class="icon-btn" id="btn-theme-picker" aria-label="Toggle theme"><i class="ti ti-moon"></i></button>
       <span class="status-pip checking" id="picker-status-pip"><span class="status-dot"></span>Checking…</span>
       <div class="user-chip" id="picker-user-chip"></div>
       <button class="btn btn-ghost btn-small" id="btn-logout">Log out</button>
@@ -91,21 +53,21 @@
   </div>
   <div class="picker-wrap">
     <h1 class="picker-heading">Your servers</h1>
-    <p class="picker-sub">Servers where you have Manage Server permissions. Invite the bot to any that don't have it yet.</p>
+    <p class="picker-sub">Servers where you have Administrator permissions.</p>
     <div id="local-banner-slot"></div>
-    <div class="server-grid" id="server-grid">
-      <div class="loading-text">Loading your servers…</div>
-    </div>
+    <div class="server-grid" id="server-grid"></div>
   </div>
 </section>
 
-<!-- ============ DASHBOARD ============ -->
+<!-- ============ DASHBOARD SHELL ============ -->
 <section id="screen-dashboard" class="screen">
   <div class="topbar">
     <div class="topbar-left">
-      <button class="btn btn-ghost btn-small" id="btn-back-picker">← Servers</button>
+      <button class="icon-btn" id="btn-back" aria-label="Go back"><i class="ti ti-arrow-left"></i></button>
+      <span class="crumb" id="dash-crumb"></span>
     </div>
     <div class="topbar-right">
+      <button class="icon-btn" id="btn-theme-dash" aria-label="Toggle theme"><i class="ti ti-moon"></i></button>
       <span class="status-pip checking" id="dash-status-pip"><span class="status-dot"></span>Checking…</span>
       <div class="user-chip" id="dash-user-chip"></div>
       <button class="btn btn-ghost btn-small" id="btn-logout2">Log out</button>
@@ -116,103 +78,31 @@
     <nav class="dash-nav">
       <div class="dash-nav-server">
         <div class="server-icon" id="dash-server-icon">S</div>
-        <div class="dash-nav-server-name" id="dash-server-name">Server</div>
+        <div>
+          <div class="dash-nav-server-name" id="dash-server-name">Server</div>
+          <div class="dash-nav-server-sub" id="dash-server-sub">—</div>
+        </div>
       </div>
-      <div class="nav-item active" data-panel="overview"><span class="nav-item-dot"></span>Overview</div>
-      <div class="nav-item" data-panel="tickets"><span class="nav-item-dot"></span>Tickets</div>
-      <div class="nav-item" data-panel="config"><span class="nav-item-dot"></span>Ticket setup</div>
+      <div class="nav-section-label">Operations</div>
+      <div class="nav-item" data-panel="overview"><i class="ti ti-home" aria-hidden="true"></i>Overview</div>
+      <div class="nav-item" data-panel="tickets"><i class="ti ti-ticket" aria-hidden="true"></i>Tickets</div>
+      <div class="nav-item" data-panel="insights"><i class="ti ti-chart-bar" aria-hidden="true"></i>Insights</div>
+      <div class="nav-section-label">Configuration</div>
+      <div class="nav-item" data-panel="subjects"><i class="ti ti-tag" aria-hidden="true"></i>Subjects</div>
+      <div class="nav-item" data-panel="panels"><i class="ti ti-layout-board" aria-hidden="true"></i>Panels</div>
+      <div class="nav-item" data-panel="settings"><i class="ti ti-settings" aria-hidden="true"></i>Server settings</div>
+      <div class="nav-section-label">Advanced</div>
+      <div class="nav-item" data-panel="status"><i class="ti ti-activity" aria-hidden="true"></i>Status</div>
     </nav>
 
     <main class="dash-main">
       <div id="local-banner-slot-dash"></div>
-
-      <!-- Overview panel -->
-      <div class="dash-panel" data-panel="overview">
-        <div class="dash-header">
-          <div>
-            <h1>Overview</h1>
-            <p>Live status pulled from your locally hosted bot.</p>
-          </div>
-        </div>
-        <div class="overview-grid">
-          <div class="overview-card"><div class="num" id="ov-open">—</div><div class="lbl">Open tickets</div></div>
-          <div class="overview-card"><div class="num" id="ov-pending">—</div><div class="lbl">Pending reply</div></div>
-          <div class="overview-card"><div class="num" id="ov-closed">—</div><div class="lbl">Closed (30d)</div></div>
-          <div class="overview-card"><div class="num" id="ov-members">—</div><div class="lbl">Server members</div></div>
-        </div>
-        <div class="config-section">
-          <h3>Bot connection</h3>
-          <div class="hint">Straight from your local bot.js instance — not stored anywhere else.</div>
-          <div class="config-row"><span class="config-row-label">Status</span><span class="status-pip checking" id="ov-bot-pip"><span class="status-dot"></span>Checking…</span></div>
-          <div class="config-row"><span class="config-row-label">Uptime</span><span class="config-row-sub" id="ov-uptime">—</span></div>
-          <div class="config-row"><span class="config-row-label">Ticket data source</span><span class="config-row-sub">GitHub: ticket_tool_data.json</span></div>
-        </div>
-      </div>
-
-      <!-- Tickets panel -->
-      <div class="dash-panel" data-panel="tickets" style="display:none">
-        <div class="dash-header">
-          <div>
-            <h1>Tickets</h1>
-            <p>All tickets synced from ticket_tool_data.json.</p>
-          </div>
-        </div>
-        <div class="ticket-toolbar">
-          <div class="ticket-filters">
-            <span class="filter-chip active" data-filter="all">All</span>
-            <span class="filter-chip" data-filter="open">Open</span>
-            <span class="filter-chip" data-filter="pending">Pending</span>
-            <span class="filter-chip" data-filter="closed">Closed</span>
-          </div>
-          <button class="btn btn-ghost btn-small" id="btn-refresh-tickets">↻ Refresh</button>
-        </div>
-        <div class="ticket-table" id="ticket-table">
-          <div class="ticket-row head">
-            <span>ID</span><span>Subject</span><span>Opened by</span><span class="col-created">Created</span><span>Status</span>
-          </div>
-          <div class="loading-text">Loading tickets…</div>
-        </div>
-      </div>
-
-      <!-- Config panel -->
-      <div class="dash-panel" data-panel="config" style="display:none">
-        <div class="dash-header">
-          <div>
-            <h1>Ticket setup</h1>
-            <p>Changes here are sent to your local bot, which writes them to GitHub.</p>
-          </div>
-        </div>
-        <div class="config-section">
-          <h3>Ticket channel</h3>
-          <div class="hint">Where the "open a ticket" panel is posted.</div>
-          <div class="config-row">
-            <span class="config-row-label">Channel</span>
-            <select id="cfg-channel"><option>#support</option></select>
-          </div>
-        </div>
-        <div class="config-section">
-          <h3>Ticket category</h3>
-          <div class="hint">New ticket channels are created under this category.</div>
-          <div class="config-row">
-            <span class="config-row-label">Category</span>
-            <select id="cfg-category"><option>Tickets</option></select>
-          </div>
-        </div>
-        <div class="config-section">
-          <h3>Support role</h3>
-          <div class="hint">This role can view and claim tickets.</div>
-          <div class="config-row">
-            <span class="config-row-label">Role</span>
-            <select id="cfg-role"><option>@Support</option></select>
-          </div>
-        </div>
-        <button class="btn btn-primary btn-small" id="btn-save-config">Save changes</button>
-      </div>
+      <div id="module-root"></div>
     </main>
   </div>
 </section>
 
-<footer class="site-footer">Ticket Keeper runs on a bot you host yourself. This page never sees your bot token or client secret.</footer>
+<footer class="site-footer">Dungeon Crawlers runs on a bot you host yourself. This page never sees your bot token or client secret.</footer>
 
 <script src="config.js"></script>
 <script src="app.js"></script>
