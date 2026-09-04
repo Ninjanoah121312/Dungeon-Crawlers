@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Redirecting…</title>
+<script>
+  // GitHub Pages has no real server-side routing — any deep link like
+  // /Dungeon-Crawlers/servers/123/tickets that isn't index.html hits
+  // this 404 page. We bounce it back to index.html with the original
+  // path preserved in sessionStorage so app.js's router can restore it.
+  sessionStorage.setItem("tk_redirect_path", window.location.pathname + window.location.search);
+  window.location.replace(window.location.origin + "/Dungeon-Crawlers/");
+</script>
+</head>
+<body></body>
+</html>
