@@ -324,17 +324,27 @@ function loadScript(src) {
     document.body.appendChild(s);
   });
 }
+function loadStyle(href) {
+  if (document.querySelector(`link[href="${href}"]`)) return; // already injected
+  const l = document.createElement("link");
+  l.rel = "stylesheet";
+  l.href = href;
+  document.head.appendChild(l);
+}
 
-// Module code lives entirely on your local bot (bot/Modules/), not in
-// this repo — the site fetches the manifest, then each file, at
-// runtime. If the bot isn't running, modules simply won't appear;
-// the dashboard still works for Overview/Insights/Status.
+// Module code lives entirely on your local bot (bot/Modules/<id>/), not
+// in this repo — the site fetches the manifest, then each module's JS
+// (and CSS, if it has one) at runtime. If the bot isn't running, modules
+// simply won't appear; the dashboard still works for Status.
 async function ensureModulesLoaded() {
   if (modulesLoaded || modulesLoadFailed) return;
   try {
     const manifest = await api("/modules");
     for (const file of manifest.shared || []) await loadScript(`${CFG.LOCAL_BOT_URL}/modules-static/${file}`);
-    for (const file of manifest.modules || []) await loadScript(`${CFG.LOCAL_BOT_URL}/modules-static/${file}`);
+    for (const mod of manifest.modules || []) {
+      if (mod.css) loadStyle(`${CFG.LOCAL_BOT_URL}/modules-static/${mod.css}`);
+      if (mod.js) await loadScript(`${CFG.LOCAL_BOT_URL}/modules-static/${mod.js}`);
+    }
     modulesLoaded = true;
   } catch {
     modulesLoadFailed = true; // Bot Servers down, or Modules/ is empty — dashboard still works without extra modules
