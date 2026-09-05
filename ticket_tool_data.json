@@ -2,20 +2,7 @@
   "guilds": {
     "1300911403703468052": {
       "tickets": [],
-      "subjects": [
-        {
-          "id": "2",
-          "name": "e (copy)",
-          "description": "",
-          "category": null,
-          "active": false,
-          "welcomeMessage": "{user.mention} welcome — **{subject.name}**. Describe your issue and support will be with you shortly.",
-          "closeMessage": "This ticket has been closed. Thanks for reaching out!",
-          "staffRoles": [],
-          "icon": "",
-          "priority": "normal"
-        }
-      ],
+      "subjects": [],
       "config": {
         "ticketChannel": null,
         "ticketCategory": null,
