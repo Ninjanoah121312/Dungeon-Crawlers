@@ -25,7 +25,7 @@ const routes = {
     const path = window.location.pathname.replace(CFG.BASE_PATH, "").replace(/^\/|\/$/g, "");
     const parts = path.split("/").filter(Boolean);
     if (parts[0] === "dashboard") return { screen: "picker" };
-    if (parts[0] === "servers" && parts[1]) return { screen: "dashboard", guildId: parts[1], panel: parts[2] || "overview" };
+    if (parts[0] === "servers" && parts[1]) return { screen: "dashboard", guildId: parts[1], panel: parts[2] || "ticket-tool" };
     return { screen: "landing" };
   },
   go(url, replace = false) {
@@ -180,20 +180,12 @@ function renderStatusPip(el, botInfo) {
   if (botInfo && botInfo.online) { el.classList.add("online"); el.innerHTML = `<span class="status-dot"></span>Bot online`; }
   else { el.classList.add("offline"); el.innerHTML = `<span class="status-dot"></span>Bot Servers down`; }
 }
-function renderLocalBanner(slotId, botInfo) {
-  const slot = document.getElementById(slotId);
-  if (!slot) return;
-  slot.innerHTML = botInfo
-    ? `<div class="local-banner ok"><i class="ti ti-check"></i> Bot Servers online</div>`
-    : `<div class="local-banner"><i class="ti ti-alert-triangle"></i> Bot Servers down — tickets, subjects, and config can't load right now.</div>`;
-}
 
 // ============================================================
 // Global state
 // ============================================================
 let botInfoCache = null;
 let currentGuild = null;   // { id, name, icon }
-let ticketsCache = [];
 
 // ============================================================
 // Boot + top-level routing
@@ -241,7 +233,7 @@ async function renderFromRoute() {
     if (!currentGuild || currentGuild.id !== route.guildId) {
       currentGuild = { id: route.guildId, name: null, icon: null };
     }
-    await enterDashboard(route.panel || "overview");
+    await enterDashboard(route.panel || "ticket-tool");
   }
 }
 
@@ -270,7 +262,6 @@ async function enterPicker() {
   grid.innerHTML = loadingBlock("Loading your servers…");
 
   await refreshHeroStatus();
-  renderLocalBanner("local-banner-slot", botInfoCache);
 
   try {
     const guilds = await fetchMyGuilds(session.token);
@@ -305,8 +296,8 @@ async function enterPicker() {
     grid.querySelectorAll("[data-open-dash]").forEach(btn => {
       btn.addEventListener("click", () => {
         currentGuild = { id: btn.dataset.openDash, name: btn.dataset.name, icon: btn.dataset.icon };
-        routes.go(`/servers/${currentGuild.id}/overview`);
-        enterDashboard("overview");
+        routes.go(`/servers/${currentGuild.id}/ticket-tool`);
+        enterDashboard("ticket-tool");
       });
     });
   } catch {
@@ -318,7 +309,6 @@ async function enterPicker() {
 // Dashboard shell
 // ============================================================
 const CORE_PANELS = [
-  { id: "overview", label: "Overview", icon: "ti-home" },
   { id: "status", label: "Status", icon: "ti-activity" },
 ];
 
@@ -383,7 +373,6 @@ async function enterDashboard(panel) {
   document.getElementById("dash-user-chip").innerHTML = `<img src="${avatarUrl(session.user)}" alt=""> ${escapeHtml(session.user.username)}`;
 
   await refreshHeroStatus();
-  renderLocalBanner("local-banner-slot-dash", botInfoCache);
   if (botInfoCache) await ensureModulesLoaded();
   buildSidebar();
 
@@ -422,40 +411,8 @@ function switchPanel(name, updateUrl = true) {
   const mod = window.DC?.getModule(name);
   if (mod) { mod.render(root, buildContext()); return; }
 
-  const renderers = { overview: renderOverview, status: renderStatusModule };
-  (renderers[name] || renderOverview)(root);
-}
-
-// ============================================================
-// Overview module
-// ============================================================
-async function renderOverview(root) {
-  root.innerHTML = `
-    <div class="dash-header"><div><h1>Overview</h1><p>Live status from your locally hosted bot.</p></div></div>
-    <div class="overview-grid">      <div class="overview-card"><div class="num" id="ov-open">—</div><div class="lbl">Open tickets</div></div>
-      <div class="overview-card"><div class="num" id="ov-pending">—</div><div class="lbl">Pending reply</div></div>
-      <div class="overview-card"><div class="num" id="ov-closed">—</div><div class="lbl">Closed (all time)</div></div>
-      <div class="overview-card"><div class="num" id="ov-members">—</div><div class="lbl">Server members</div></div>
-    </div>
-    <div class="config-section">
-      <h3>Bot connection</h3>
-      <div class="hint">Straight from your local bot.js instance.</div>
-      <div class="config-row"><span class="config-row-label">Status</span><span class="status-pip checking" id="ov-bot-pip"><span class="status-dot"></span>Checking…</span></div>
-      <div class="config-row"><span class="config-row-label">Bot tag</span><span class="config-row-label" style="font-weight:400;color:var(--text-dim)">${escapeHtml(botInfoCache?.botTag || "—")}</span></div>
-      <div class="config-row"><span class="config-row-label">Uptime</span><span class="config-row-label" style="font-weight:400;color:var(--text-dim)">${formatUptime(botInfoCache?.uptimeSeconds)}</span></div>
-      <div class="config-row"><span class="config-row-label">Data source</span><span class="config-row-label" style="font-weight:400;color:var(--text-dim)">GitHub: ticket_tool_data.json</span></div>
-    </div>`;
-  const ovPip = document.getElementById("ov-bot-pip");
-  if (ovPip) renderStatusPip(ovPip, botInfoCache);
-  if (!botInfoCache) return;
-  try {
-    const data = await api(`/guilds/${currentGuild.id}/tickets`);
-    ticketsCache = data.tickets || [];
-    document.getElementById("ov-open").textContent = ticketsCache.filter(t => t.status === "open").length;
-    document.getElementById("ov-pending").textContent = ticketsCache.filter(t => t.status === "pending").length;
-    document.getElementById("ov-closed").textContent = ticketsCache.filter(t => t.status === "closed").length;
-    document.getElementById("ov-members").textContent = data.memberCount ?? "—";
-  } catch { /* banner already covers this */ }
+  const renderers = { status: renderStatusModule };
+  (renderers[name] || renderStatusModule)(root);
 }
 
 // ============================================================
