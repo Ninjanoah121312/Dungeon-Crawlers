@@ -20,7 +20,7 @@ window.TICKET_KEEPER_CONFIG = {
   // Where your locally hosted bot's bridge server is listening.
   // bot.js runs this — see bot/bot.js. Only reachable while your PC
   // and the bot are running; the site handles that being offline.
-  LOCAL_BOT_URL: "https://link-representatives-toward-selling.trycloudflare.com",
+  LOCAL_BOT_URL: "https://yoga-hats-wanna-snap.trycloudflare.com",
 
   // GitHub Pages project sites are served from a subpath, e.g.
   // /Dungeon-Crawlers/. The router needs this to build correct URLs
