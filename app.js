@@ -319,7 +319,6 @@ async function enterPicker() {
 // ============================================================
 const CORE_PANELS = [
   { id: "overview", label: "Overview", icon: "ti-home" },
-  { id: "insights", label: "Insights", icon: "ti-chart-bar" },
   { id: "status", label: "Status", icon: "ti-activity" },
 ];
 
@@ -423,7 +422,7 @@ function switchPanel(name, updateUrl = true) {
   const mod = window.DC?.getModule(name);
   if (mod) { mod.render(root, buildContext()); return; }
 
-  const renderers = { overview: renderOverview, insights: renderInsights, status: renderStatusModule };
+  const renderers = { overview: renderOverview, status: renderStatusModule };
   (renderers[name] || renderOverview)(root);
 }
 
@@ -457,36 +456,6 @@ async function renderOverview(root) {
     document.getElementById("ov-closed").textContent = ticketsCache.filter(t => t.status === "closed").length;
     document.getElementById("ov-members").textContent = data.memberCount ?? "—";
   } catch { /* banner already covers this */ }
-}
-
-// ============================================================
-// Insights module
-// ============================================================
-async function renderInsights(root) {
-  root.innerHTML = `<div class="dash-header"><div><h1>Insights</h1><p>Ticket activity for this server.</p></div></div><div id="insights-body">${loadingBlock()}</div>`;
-  const body = document.getElementById("insights-body");
-  if (!botInfoCache) { body.innerHTML = `<div class="empty-state"><i class="ti ti-plug-connected-x glyph"></i>Bot Servers down.</div>`; return; }
-  let tickets = [];
-  try { const d = await api(`/guilds/${currentGuild.id}/tickets`); tickets = d.tickets || []; } catch { tickets = []; }
-  const total = tickets.length;
-  const open = tickets.filter(t => t.status === "open").length;
-  const closed = tickets.filter(t => t.status === "closed").length;
-  const bySubject = {};
-  tickets.forEach(t => { const k = t.subject || "General"; bySubject[k] = (bySubject[k] || 0) + 1; });
-  const subjectRows = Object.entries(bySubject).sort((a, b) => b[1] - a[1]);
-
-  body.innerHTML = `
-    <div class="overview-grid" style="grid-template-columns:repeat(3,1fr)">
-      <div class="overview-card"><div class="num">${total}</div><div class="lbl">Total tickets</div></div>
-      <div class="overview-card"><div class="num">${open}</div><div class="lbl">Currently open</div></div>
-      <div class="overview-card"><div class="num">${closed}</div><div class="lbl">Closed</div></div>
-    </div>
-    <div class="config-section">
-      <h3>Tickets by subject</h3>
-      <div class="hint">Counts pulled from all tickets currently in the data file.</div>
-      ${subjectRows.length === 0 ? `<div class="empty-state">No ticket data yet.</div>` :
-        subjectRows.map(([name, count]) => `<div class="config-row"><span class="config-row-label">${escapeHtml(name)}</span><span class="config-row-label" style="font-weight:400;color:var(--text-dim)">${count}</span></div>`).join("")}
-    </div>`;
 }
 
 // ============================================================
