@@ -42,19 +42,19 @@
 
 <!-- ============ SERVER PICKER ============ -->
 <section id="screen-picker" class="screen">
-  <div class="topbar">
-    <div class="topbar-left"><div class="brand-glyph">DC</div><strong style="font-size:13.5px">Dungeon Crawlers</strong></div>
-    <div class="topbar-right">
-      <button class="icon-btn" id="btn-theme-picker" aria-label="Toggle theme"><i class="ti ti-moon"></i></button>
-      <span class="status-pip checking" id="picker-status-pip"><span class="status-dot"></span>Checking…</span>
-      <div class="user-chip" id="picker-user-chip"></div>
-      <button class="btn btn-ghost btn-small" id="btn-logout">Log out</button>
-    </div>
-  </div>
-  <div class="picker-wrap">
-    <h1 class="picker-heading">Your servers</h1>
-    <p class="picker-sub">Servers where you have Administrator permissions.</p>
-    <div class="server-grid" id="server-grid"></div>
+  <div class="app-shell">
+    <nav class="app-sidebar" id="picker-sidebar">
+      <div class="app-sidebar-brand"><div class="brand-glyph">DC</div><strong style="font-size:13.5px">Dungeon Crawlers</strong></div>
+      <div class="nav-section-label">Navigation</div>
+      <div class="nav-item active" data-picker-panel="dashboard"><i class="ti ti-home"></i> Dashboard</div>
+      <div class="nav-item" data-picker-panel="my-tickets"><i class="ti ti-ticket"></i> My Tickets</div>
+      <div class="nav-item premium" data-picker-panel="premium"><i class="ti ti-crown"></i> Premium</div>
+      <div class="app-sidebar-spacer"></div>
+      <div id="picker-sidebar-bottom"></div>
+    </nav>
+    <main class="app-main">
+      <div id="picker-panel-root"></div>
+    </main>
   </div>
 </section>
 
@@ -66,10 +66,7 @@
       <span class="crumb" id="dash-crumb"></span>
     </div>
     <div class="topbar-right">
-      <button class="icon-btn" id="btn-theme-dash" aria-label="Toggle theme"><i class="ti ti-moon"></i></button>
       <span class="status-pip checking" id="dash-status-pip"><span class="status-dot"></span>Checking…</span>
-      <div class="user-chip" id="dash-user-chip"></div>
-      <button class="btn btn-ghost btn-small" id="btn-logout2">Log out</button>
     </div>
   </div>
 
@@ -83,6 +80,8 @@
         </div>
       </div>
       <div id="dash-nav-items"></div>
+      <div class="app-sidebar-spacer"></div>
+      <div id="dash-sidebar-bottom"></div>
     </nav>
 
     <main class="dash-main">
@@ -91,9 +90,33 @@
   </div>
 </section>
 
+<!-- ============ STATUS PAGE ============ -->
+<section id="screen-status" class="screen">
+  <div class="app-shell">
+    <nav class="app-sidebar">
+      <div class="app-sidebar-brand"><div class="brand-glyph">DC</div><strong style="font-size:13.5px">Dungeon Crawlers</strong></div>
+      <div class="nav-item" id="status-back-btn"><i class="ti ti-arrow-left"></i> Back</div>
+      <div class="app-sidebar-spacer"></div>
+      <div id="status-sidebar-bottom"></div>
+    </nav>
+    <main class="app-main">
+      <div id="status-root"></div>
+    </main>
+  </div>
+</section>
+
 <footer class="site-footer">Dungeon Crawlers runs on a bot you host yourself. This page never sees your bot token or client secret.</footer>
 
-<script src="config.js"></script>
-<script src="app.js"></script>
+<script>
+  // GitHub Pages serves static files with long browser cache lifetimes,
+  // so after every deploy the browser can keep serving a stale app.js
+  // (this bit people before — a hard refresh "fixed" a phantom "bot
+  // down" that was really just an old cached script). Loading these two
+  // with a timestamp query string means the browser always treats them
+  // as a new URL and re-fetches, with no manual version bump needed.
+  const v = Date.now();
+  document.write(`<script src="config.js?v=${v}"><\/script>`);
+  document.write(`<script src="app.js?v=${v}"><\/script>`);
+</script>
 </body>
 </html>
