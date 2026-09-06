@@ -737,14 +737,26 @@ function formatDuration(totalSeconds) {
 // Wiring
 // ============================================================
 document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("btn-login").addEventListener("click", (e) => { e.preventDefault(); beginLogin(); });
-  document.getElementById("btn-invite").addEventListener("click", (e) => { e.preventDefault(); window.open(inviteUrl(), "_blank"); });
-  document.getElementById("btn-logout").addEventListener("click", () => { clearSession(); routes.go("/", true); showScreen("screen-landing"); });
-  document.getElementById("btn-back").addEventListener("click", () => {
+  // Defensive: a mismatch between index.html and app.js (stale deploy of
+  // one but not the other, a renamed id, etc.) should never crash the
+  // whole boot sequence again — one missing element used to throw here
+  // and silently kill every listener after it, including boot() itself,
+  // which is exactly why the status pip could get stuck on "Checking..."
+  // forever with no visible error on the page.
+  function on(id, event, handler) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(event, handler);
+    else console.warn(`Wiring: #${id} not found in the page — skipping its listener. If this persists, index.html and app.js are probably out of sync (redeploy both together).`);
+  }
+
+  on("btn-login", "click", (e) => { e.preventDefault(); beginLogin(); });
+  on("btn-invite", "click", (e) => { e.preventDefault(); window.open(inviteUrl(), "_blank"); });
+  on("btn-logout", "click", () => { clearSession(); routes.go("/", true); showScreen("screen-landing"); });
+  on("btn-back", "click", () => {
     if (window.location.pathname.includes("/servers/")) { routes.go("/dashboard"); enterPicker(); }
     else window.history.back();
   });
-  document.getElementById("status-back-btn").addEventListener("click", () => { window.history.back(); });
+  on("status-back-btn", "click", () => { window.history.back(); });
 
   boot();
   setInterval(async () => {
