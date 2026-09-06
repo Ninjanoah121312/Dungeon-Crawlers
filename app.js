@@ -204,11 +204,28 @@ function renderSidebarBottom(slotId) {
   document.getElementById("sb-status-link").addEventListener("click", (e) => { e.preventDefault(); enterStatusPage(); });
   document.getElementById("sb-theme-toggle").addEventListener("click", (e) => { toggleTheme(); e.target.classList.toggle("on"); document.querySelectorAll(".sidebar-theme-row span").forEach(s => s.innerHTML = `<i class="ti ${document.body.getAttribute("data-theme") !== "light" ? "ti-moon" : "ti-sun"}"></i> ${document.body.getAttribute("data-theme") !== "light" ? "Dark" : "Light"} mode`); });
   const menu = document.getElementById("sb-profile-menu");
-  document.getElementById("sb-profile-trigger").addEventListener("click", (e) => {
+  const trigger = document.getElementById("sb-profile-trigger");
+  function closeMenuOnOutsideClick(e) {
+    if (!menu.contains(e.target) && !trigger.contains(e.target)) {
+      menu.style.display = "none";
+      document.removeEventListener("click", closeMenuOnOutsideClick, true);
+    }
+  }
+  trigger.addEventListener("click", (e) => {
     e.stopPropagation();
-    menu.style.display = menu.style.display === "none" ? "block" : "none";
+    const isOpen = menu.style.display !== "none";
+    if (isOpen) {
+      menu.style.display = "none";
+      document.removeEventListener("click", closeMenuOnOutsideClick, true);
+    } else {
+      menu.style.display = "block";
+      // Attached only now, and only for this open menu instance — never
+      // fires on a click that happened before the menu was actually open,
+      // which was previously eating the first click on anything else in
+      // the sidebar (theme toggle, Status link) instead of the menu.
+      document.addEventListener("click", closeMenuOnOutsideClick, true);
+    }
   });
-  document.addEventListener("click", () => { menu.style.display = "none"; }, { once: true });
   document.getElementById("sb-logout-btn").addEventListener("click", () => { clearSession(); routes.go("/", true); showScreen("screen-landing"); });
   document.getElementById("sb-profile-btn").addEventListener("click", () => { menu.style.display = "none"; /* no dedicated profile page yet */ });
 }
@@ -254,6 +271,7 @@ function renderStatusPip(el, botInfo) {
 // ============================================================
 let botInfoCache = null;
 let currentGuild = null;   // { id, name, icon }
+let currentGuildDisabledModules = [];
 
 // ============================================================
 // Boot + top-level routing
@@ -579,30 +597,48 @@ function buildContext() {
   };
 }
 
-function navItemHtml(id, icon, label) {
-  return `<div class="nav-item" data-panel="${id}"><i class="ti ${icon}" aria-hidden="true"></i>${label}</div>`;
+function navItemHtml(id, icon, label, toggleable) {
+  return `<div class="nav-item" data-panel="${id}">
+    <i class="ti ${icon}" aria-hidden="true"></i><span class="nav-item-label">${label}</span>
+    ${toggleable ? `<button class="nav-item-toggle-btn" data-module-toggle="${id}" title="Disable module" aria-label="Disable ${label}"><i class="ti ti-toggle-right"></i></button>` : ""}
+  </div>`;
 }
 
-function buildSidebar() {
+function buildSidebar(disabledModules) {
+  disabledModules = disabledModules || [];
   const wrap = document.getElementById("dash-nav-items");
-  const modules = window.DC?.modules || [];
+  const modules = (window.DC?.modules || []).filter(m => !disabledModules.includes(m.id));
 
   const modulesHtml = modules.length
-    ? `<div class="nav-section-label">Modules</div>${modules.map(m => navItemHtml(m.id, m.icon, m.label)).join("")}`
+    ? `<div class="nav-section-label">Modules</div>${modules.map(m => navItemHtml(m.id, m.icon, m.label, true)).join("")}`
     : "";
-  const generalHtml = `<div class="nav-section-label">General</div>${CORE_PANELS.map(p => navItemHtml(p.id, p.icon, p.label)).join("")}`;
+  const generalHtml = `<div class="nav-section-label">General</div>${CORE_PANELS.map(p => navItemHtml(p.id, p.icon, p.label, false)).join("")}`;
 
   wrap.innerHTML = modulesHtml + generalHtml;
-  wrap.querySelectorAll(".nav-item").forEach(n => n.addEventListener("click", () => switchPanel(n.dataset.panel)));
+  wrap.querySelectorAll(".nav-item").forEach(n => n.addEventListener("click", (e) => {
+    if (e.target.closest("[data-module-toggle]")) return; // the toggle button handles its own click
+    switchPanel(n.dataset.panel);
+  }));
+  wrap.querySelectorAll("[data-module-toggle]").forEach(btn => btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const moduleId = btn.dataset.moduleToggle;
+    if (!confirm(`Disable the "${moduleId}" module for this server? You can re-enable it later from Server Settings.`)) return;
+    try {
+      await api(`/guilds/${currentGuild.id}/modules/${moduleId}`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+      currentGuildDisabledModules = [...disabledModules, moduleId];
+      buildSidebar(currentGuildDisabledModules);
+      switchPanel("status"); // the just-disabled module's panel is no longer valid to stay on
+    } catch (e2) { alert(`Couldn't disable module: ${e2.message}`); }
+  }));
 }
 
 async function enterDashboard(panel) {
   showScreen("screen-dashboard");
   renderSidebarBottom("dash-sidebar-bottom");
+  const session = getSession();
 
   await refreshHeroStatus();
   if (botInfoCache) await ensureModulesLoaded();
-  buildSidebar();
 
   if (!currentGuild.name && botInfoCache) {
     const found = (botInfoCache.guilds || []).find(g => g.id === currentGuild.id);
@@ -614,10 +650,14 @@ async function enterDashboard(panel) {
     : initials(currentGuild.name || "S");
   document.getElementById("dash-crumb").innerHTML = `Servers <i class="ti ti-chevron-right" style="font-size:12px"></i> <b>${escapeHtml(currentGuild.name || "…")}</b>`;
 
-  // resolve viewer's role (owner/admin) via bot meta, once we know the guild
+  // resolve viewer's role (owner/admin) and which modules this server has
+  // disabled via one shared meta call, once we know the guild
   const sub = document.getElementById("dash-server-sub");
+  let guildDisabledModules = [];
   if (botInfoCache) {
     const meta = await api(`/guilds/${currentGuild.id}/meta?userId=${session.user.id}`).catch(() => null);
+    guildDisabledModules = meta?.disabledModules || [];
+    currentGuildDisabledModules = guildDisabledModules;
     if (meta?.viewerRole) {
       sub.innerHTML = meta.viewerRole === "owner" ? `<span class="role-badge owner"><i class="ti ti-crown"></i> Owner</span>` : `<span class="role-badge admin"><i class="ti ti-shield"></i> Admin</span>`;
     } else {
@@ -626,6 +666,7 @@ async function enterDashboard(panel) {
   } else {
     sub.textContent = "Bot Servers down";
   }
+  buildSidebar(guildDisabledModules);
 
   switchPanel(panel, false);
 }
@@ -671,14 +712,15 @@ async function renderStatusModule(root) {
         <span>Bot process</span>
         <span class="status-pip ${history.online ? "online" : "offline"}"><span class="status-dot"></span>${history.online ? "Operational" : "Down"}</span>
       </div>
-      <div class="status-daybar">
-        ${days.map(d => `<div class="status-day status-day-${d.level}" title="${d.title}"></div>`).join("")}
+      <div class="status-daybar" id="status-daybar">
+        ${days.map((d, i) => `<div class="status-day status-day-${d.level}" data-day-idx="${i}"></div>`).join("")}
       </div>
       <div class="status-daybar-footer">
         <span>90 days ago</span>
-        <span>${history.uptimePercent}% uptime</span>
+        <span>${history.uptimePercent}% uptime over 90 days</span>
         <span>Today</span>
       </div>
+      <div class="status-day-tooltip" id="status-day-tooltip" style="display:none"></div>
     </div>
     <div class="overview-grid" style="grid-template-columns:repeat(3,1fr);margin-top:18px">
       <div class="overview-card"><div class="num">${formatUptime(history.currentUptimeSeconds)}</div><div class="lbl">Current uptime</div></div>
@@ -686,16 +728,76 @@ async function renderStatusModule(root) {
       <div class="overview-card"><div class="num">${history.incidents.length}</div><div class="lbl">Recorded incidents</div></div>
     </div>
     <div class="config-section" style="margin-top:18px">
+      <h3>Installed modules</h3>
+      <div class="hint">Turn modules on or off for this server. Disabling a module hides it from the sidebar without deleting its data.</div>
+      <div id="status-modules-list">${loadingBlock()}</div>
+    </div>
+    <div class="config-section" style="margin-top:18px">
       <h3>Incident history</h3>
       <div class="hint">Unplanned downtime the bot detected on its own restart — a clean shutdown (Ctrl+C) is never logged as an incident.</div>
       ${history.incidents.length === 0
         ? `<div class="empty-state">No downtime recorded.</div>`
         : history.incidents.slice(0, 25).map(i => `
-          <div class="config-row">
-            <span class="config-row-label">${new Date(i.startedAt).toLocaleString()}</span>
+          <div class="config-row" style="align-items:flex-start">
+            <span class="config-row-label">${new Date(i.startedAt).toLocaleString()}${i.note ? `<div class="field-hint" style="margin-top:2px;font-weight:400">${escapeHtml(i.note)}</div>` : ""}</span>
             <span class="config-row-label" style="font-weight:400;color:var(--text-dim)">${formatDuration(i.durationSeconds)} downtime</span>
           </div>`).join("")}
     </div>`;
+
+  wireStatusDayTooltips(days);
+  if (currentGuild?.id) paintStatusModulesList();
+  else document.getElementById("status-modules-list").innerHTML = `<div class="empty-state">Open a server's dashboard first to manage its modules.</div>`;
+}
+
+async function paintStatusModulesList() {
+  const slot = document.getElementById("status-modules-list");
+  if (!slot) return;
+  try {
+    const meta = await api(`/guilds/${currentGuild.id}/meta?userId=${getSession().user.id}`);
+    const disabled = meta.disabledModules || [];
+    const modules = window.DC?.modules || [];
+    if (modules.length === 0) { slot.innerHTML = `<div class="empty-state">No modules loaded.</div>`; return; }
+    slot.innerHTML = modules.map(m => `
+      <div class="config-row">
+        <span class="config-row-label"><i class="ti ${m.icon}" style="margin-right:8px;color:var(--text-dim)"></i>${escapeHtml(m.label)}</span>
+        <button class="toggle ${!disabled.includes(m.id) ? "on" : ""}" data-status-module-toggle="${m.id}" aria-label="Toggle ${m.label}"></button>
+      </div>`).join("");
+    slot.querySelectorAll("[data-status-module-toggle]").forEach(btn => btn.addEventListener("click", async () => {
+      const moduleId = btn.dataset.statusModuleToggle;
+      const nowEnabled = !btn.classList.contains("on");
+      try {
+        await api(`/guilds/${currentGuild.id}/modules/${moduleId}`, { method: "PUT", body: JSON.stringify({ enabled: nowEnabled }) });
+        btn.classList.toggle("on");
+        currentGuildDisabledModules = nowEnabled ? currentGuildDisabledModules.filter(id => id !== moduleId) : [...currentGuildDisabledModules, moduleId];
+        buildSidebar(currentGuildDisabledModules);
+      } catch (e) { alert(`Couldn't update module: ${e.message}`); }
+    }));
+  } catch {
+    slot.innerHTML = `<div class="empty-state">Couldn't load module list.</div>`;
+  }
+}
+
+function wireStatusDayTooltips(days) {
+  const bar = document.getElementById("status-daybar");
+  const tooltip = document.getElementById("status-day-tooltip");
+  if (!bar || !tooltip) return;
+  bar.querySelectorAll("[data-day-idx]").forEach(el => {
+    el.addEventListener("mouseenter", () => {
+      const d = days[+el.dataset.dayIdx];
+      tooltip.innerHTML = `
+        <div class="status-day-tooltip-date">${d.dateLabel}</div>
+        ${d.downtimeSeconds > 0 ? `
+          <div class="status-day-tooltip-row"><i class="ti ti-alert-triangle" style="color:var(--amber)"></i> ${formatDuration(d.downtimeSeconds)} downtime</div>
+          <div class="status-day-tooltip-pct">${d.pctOfDay}% of the day</div>
+          ${d.notes.length ? d.notes.map(n => `<div class="status-day-tooltip-note">${escapeHtml(n)}</div>`).join("") : ""}
+        ` : `<div class="status-day-tooltip-row ok"><i class="ti ti-check"></i> No downtime recorded</div>`}`;
+      const rect = el.getBoundingClientRect();
+      const barRect = bar.getBoundingClientRect();
+      tooltip.style.left = `${rect.left - barRect.left + rect.width / 2}px`;
+      tooltip.style.display = "block";
+    });
+    el.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
+  });
 }
 
 function buildDayBuckets(incidents, numDays) {
@@ -718,7 +820,13 @@ function buildDayBuckets(incidents, numDays) {
     if (dayStart > now) level = "future";
     else if (pctDown > 0.1) level = "major";
     else if (pctDown > 0) level = "minor";
-    days.push({ level, title: `${dayStart.toLocaleDateString()}${downtimeMs > 0 ? ` — ${formatDuration(Math.round(downtimeMs / 1000))} downtime` : " — no downtime recorded"}` });
+    days.push({
+      level,
+      dateLabel: dayStart.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }),
+      downtimeSeconds: Math.round(downtimeMs / 1000),
+      pctOfDay: Math.round(pctDown * 1000) / 10,
+      notes: dayIncidents.filter(inc => inc.note).map(inc => inc.note),
+    });
   }
   return days;
 }
@@ -766,7 +874,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // modules and rebuild the sidebar so newly-available modules appear
     if (!wasOnline && botInfoCache?.online && document.getElementById("screen-dashboard").classList.contains("active")) {
       await ensureModulesLoaded();
-      buildSidebar();
+      buildSidebar(currentGuildDisabledModules);
     }
   }, 15000);
 });
