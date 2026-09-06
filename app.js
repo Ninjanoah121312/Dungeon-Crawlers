@@ -24,7 +24,10 @@ const routes = {
   parse() {
     const path = window.location.pathname.replace(CFG.BASE_PATH, "").replace(/^\/|\/$/g, "");
     const parts = path.split("/").filter(Boolean);
-    if (parts[0] === "dashboard") return { screen: "picker" };
+    if (parts[0] === "dashboard") return { screen: "picker", panel: "dashboard" };
+    if (parts[0] === "my-tickets") return { screen: "picker", panel: "my-tickets" };
+    if (parts[0] === "premium") return { screen: "picker", panel: "premium" };
+    if (parts[0] === "status") return { screen: "status" };
     if (parts[0] === "servers" && parts[1]) return { screen: "dashboard", guildId: parts[1], panel: parts[2] || "ticket-tool" };
     return { screen: "landing" };
   },
@@ -118,17 +121,31 @@ function isAdmin(guild) {
 // Local bot bridge
 // ============================================================
 async function pingLocalBot() {
+  // Quick tunnels (trycloudflare.com) add real latency, especially right
+  // after they spin up — 2.5s was too tight and made a perfectly-online
+  // bot look down. Try /status first (this is the real check — it's the
+  // endpoint that returns bot info); if that fails, fall back to a bare
+  // root request purely to tell "bot unreachable" apart from "bot is up
+  // but /status itself errored", which is a more useful failure signal.
   try {
-    const res = await fetch(`${CFG.LOCAL_BOT_URL}/status`, { signal: AbortSignal.timeout(2500) });
-    if (!res.ok) throw new Error();
-    return await res.json();
-  } catch { return null; }
+    const res = await fetch(`${CFG.LOCAL_BOT_URL}/status`, { signal: AbortSignal.timeout(8000) });
+    if (res.ok) return await res.json();
+  } catch { /* fall through to root check below */ }
+
+  try {
+    await fetch(`${CFG.LOCAL_BOT_URL}/`, { signal: AbortSignal.timeout(8000) });
+    // Root responds (even a 404 means the server answered) but /status
+    // didn't — the tunnel/bot process is reachable, just not healthy.
+    return null;
+  } catch {
+    return null; // truly unreachable: tunnel down, bot down, or DNS/CORS issue
+  }
 }
 async function api(path, options = {}) {
   const res = await fetch(`${CFG.LOCAL_BOT_URL}${path}`, {
     ...options,
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    signal: AbortSignal.timeout(6000),
+    signal: AbortSignal.timeout(10000),
   });
   if (!res.ok) {
     let detail = "";
@@ -152,6 +169,57 @@ function applyTheme(theme) {
   });
 }
 function toggleTheme() { applyTheme(document.body.getAttribute("data-theme") === "dark" ? "light" : "dark"); }
+
+// Shared bottom-of-sidebar block used by both the picker screen and the
+// per-server dashboard: a Status link, a light/dark switch, and the
+// logged-in user's profile chip which opens a small Profile/Log out menu
+// on click (matches the reference screenshot's popup).
+function renderSidebarBottom(slotId) {
+  const slot = document.getElementById(slotId);
+  if (!slot) return;
+  const session = getSession();
+  const isDark = document.body.getAttribute("data-theme") !== "light";
+  slot.innerHTML = `
+    <div class="sidebar-bottom">
+      <a href="#" class="nav-item" id="sb-status-link"><i class="ti ti-activity"></i> Status</a>
+      <div class="sidebar-theme-row">
+        <span><i class="ti ${isDark ? "ti-moon" : "ti-sun"}"></i> ${isDark ? "Dark" : "Light"} mode</span>
+        <button class="toggle ${isDark ? "on" : ""}" id="sb-theme-toggle" aria-label="Toggle theme"></button>
+      </div>
+      <div class="sidebar-profile" id="sb-profile-trigger">
+        <img class="sidebar-profile-avatar" src="${avatarUrl(session.user)}" alt="">
+        <div class="sidebar-profile-name">${escapeHtml(session.user.username)}</div>
+        <i class="ti ti-chevron-up" style="margin-left:auto;color:var(--text-dim);font-size:14px"></i>
+      </div>
+      <div class="sidebar-profile-menu" id="sb-profile-menu" style="display:none">
+        <div class="sidebar-profile-menu-header">
+          <img class="sidebar-profile-avatar" src="${avatarUrl(session.user)}" alt="">
+          <div><div class="sidebar-profile-name">${escapeHtml(session.user.username)}</div></div>
+        </div>
+        <button class="kebab-menu-item" id="sb-profile-btn"><i class="ti ti-user-circle"></i> Profile</button>
+        <button class="kebab-menu-item danger" id="sb-logout-btn"><i class="ti ti-logout"></i> Log out</button>
+      </div>
+    </div>`;
+
+  document.getElementById("sb-status-link").addEventListener("click", (e) => { e.preventDefault(); enterStatusPage(); });
+  document.getElementById("sb-theme-toggle").addEventListener("click", (e) => { toggleTheme(); e.target.classList.toggle("on"); document.querySelectorAll(".sidebar-theme-row span").forEach(s => s.innerHTML = `<i class="ti ${document.body.getAttribute("data-theme") !== "light" ? "ti-moon" : "ti-sun"}"></i> ${document.body.getAttribute("data-theme") !== "light" ? "Dark" : "Light"} mode`); });
+  const menu = document.getElementById("sb-profile-menu");
+  document.getElementById("sb-profile-trigger").addEventListener("click", (e) => {
+    e.stopPropagation();
+    menu.style.display = menu.style.display === "none" ? "block" : "none";
+  });
+  document.addEventListener("click", () => { menu.style.display = "none"; }, { once: true });
+  document.getElementById("sb-logout-btn").addEventListener("click", () => { clearSession(); routes.go("/", true); showScreen("screen-landing"); });
+  document.getElementById("sb-profile-btn").addEventListener("click", () => { menu.style.display = "none"; /* no dedicated profile page yet */ });
+}
+
+async function enterStatusPage() {
+  showScreen("screen-status");
+  renderSidebarBottom("status-sidebar-bottom");
+  const root = document.getElementById("status-root");
+  root.innerHTML = loadingBlock("Loading status…");
+  await renderStatusModule(root);
+}
 applyTheme(localStorage.getItem(LS.theme) || "dark");
 
 // ============================================================
@@ -228,7 +296,8 @@ async function renderFromRoute() {
   if (route.screen !== "landing" && !session) { routes.go("/", true); showScreen("screen-landing"); return; }
 
   if (route.screen === "landing") { showScreen("screen-landing"); return; }
-  if (route.screen === "picker") { await enterPicker(); return; }
+  if (route.screen === "picker") { await enterPicker(route.panel); return; }
+  if (route.screen === "status") { await enterStatusPage(); return; }
   if (route.screen === "dashboard") {
     if (!currentGuild || currentGuild.id !== route.guildId) {
       currentGuild = { id: route.guildId, name: null, icon: null };
@@ -253,15 +322,46 @@ async function refreshHeroStatus() {
 // ============================================================
 // Picker screen
 // ============================================================
-async function enterPicker() {
+let pickerActivePanel = "dashboard";
+
+async function enterPicker(panel) {
   showScreen("screen-picker");
-  const session = getSession();
-  document.getElementById("picker-user-chip").innerHTML = `<img src="${avatarUrl(session.user)}" alt=""> ${escapeHtml(session.user.username)}`;
-
-  const grid = document.getElementById("server-grid");
-  grid.innerHTML = loadingBlock("Loading your servers…");
-
+  pickerActivePanel = panel || pickerActivePanel || "dashboard";
+  renderSidebarBottom("picker-sidebar-bottom");
   await refreshHeroStatus();
+  paintPickerNav();
+  await renderPickerPanel(pickerActivePanel);
+
+  document.querySelectorAll("#picker-sidebar [data-picker-panel]").forEach(el => {
+    el.addEventListener("click", () => {
+      pickerActivePanel = el.dataset.pickerPanel;
+      routes.go(pickerActivePanel === "dashboard" ? "/" : `/${pickerActivePanel}`);
+      paintPickerNav();
+      renderPickerPanel(pickerActivePanel);
+    });
+  });
+}
+
+function paintPickerNav() {
+  document.querySelectorAll("#picker-sidebar [data-picker-panel]").forEach(el => {
+    el.classList.toggle("active", el.dataset.pickerPanel === pickerActivePanel);
+  });
+}
+
+async function renderPickerPanel(panel) {
+  const root = document.getElementById("picker-panel-root");
+  if (panel === "my-tickets") return renderMyTicketsPanel(root);
+  if (panel === "premium") return renderPremiumPanel(root);
+  return renderDashboardPanel(root);
+}
+
+async function renderDashboardPanel(root) {
+  root.innerHTML = `
+    <h1 class="picker-heading">Your servers</h1>
+    <p class="picker-sub">Servers where you have Administrator permissions.</p>
+    <div class="server-grid" id="server-grid">${loadingBlock("Loading your servers…")}</div>`;
+  const grid = document.getElementById("server-grid");
+  const session = getSession();
 
   try {
     const guilds = await fetchMyGuilds(session.token);
@@ -303,6 +403,125 @@ async function enterPicker() {
   } catch {
     grid.innerHTML = `<div class="empty-state">Couldn't load your servers. Try logging in again.</div>`;
   }
+}
+
+function renderPremiumPanel(root) {
+  root.innerHTML = `
+    <h1 class="picker-heading">Premium</h1>
+    <p class="picker-sub">Unlock higher limits and advanced features across every server.</p>
+    <div class="empty-state"><i class="ti ti-crown glyph"></i>Premium plans aren't set up yet — check back soon.</div>`;
+}
+
+// ============================================================
+// My Tickets — every ticket the logged-in user has personally
+// opened, across every server the bot is in (not just servers
+// they administer).
+// ============================================================
+async function renderMyTicketsPanel(root) {
+  root.innerHTML = `
+    <h1 class="picker-heading">My Tickets</h1>
+    <p class="picker-sub" id="my-tickets-count">Loading…</p>
+    <div class="ticket-toolbar">
+      <input type="text" class="search-input" id="mt-search" placeholder="Search tickets…">
+    </div>
+    <div id="my-tickets-list">${loadingBlock()}</div>`;
+
+  const session = getSession();
+  let tickets = [];
+  try {
+    const d = await api(`/tickets?userId=${session.user.id}`);
+    tickets = d.tickets || [];
+  } catch {
+    document.getElementById("my-tickets-list").innerHTML = `<div class="empty-state"><i class="ti ti-plug-connected-x glyph"></i>Couldn't load your tickets — Bot Servers down.</div>`;
+    document.getElementById("my-tickets-count").textContent = "";
+    return;
+  }
+  document.getElementById("my-tickets-count").textContent = `~${tickets.length} ticket${tickets.length === 1 ? "" : "s"} found`;
+  paintMyTicketsList(tickets, "");
+  document.getElementById("mt-search").addEventListener("input", (e) => paintMyTicketsList(tickets, e.target.value));
+}
+
+function paintMyTicketsList(tickets, query) {
+  const list = document.getElementById("my-tickets-list");
+  let rows = tickets;
+  if (query) {
+    const q = query.toLowerCase();
+    rows = rows.filter(t => (t.subject || "").toLowerCase().includes(q) || (t.guildName || "").toLowerCase().includes(q));
+  }
+  if (rows.length === 0) {
+    list.innerHTML = `<div class="empty-state"><i class="ti ti-ticket-off glyph"></i>${tickets.length === 0 ? "You haven't opened any tickets yet." : "No tickets match."}</div>`;
+    return;
+  }
+  list.innerHTML = `
+    <div class="ticket-table">
+      <div class="ticket-row head"><span>Server</span><span>Subject</span><span class="col-created">Created</span><span>Status</span></div>
+      ${rows.map(t => `
+        <div class="ticket-row ticket-row-clickable" data-my-ticket="${t.guildId}:${t.id}">
+          <span style="display:flex;align-items:center;gap:8px">${t.guildIcon ? `<img src="https://cdn.discordapp.com/icons/${t.guildId}/${t.guildIcon}.png" style="width:20px;height:20px;border-radius:6px" alt="">` : `<span class="server-icon" style="width:20px;height:20px;font-size:9px;margin:0">${initials(t.guildName || "?")}</span>`} ${escapeHtml(t.guildName || "Unknown server")}</span>
+          <span>${escapeHtml(t.subject || "No subject")}</span>
+          <span class="col-created">${t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "—"}</span>
+          <span class="badge badge-${t.status}">${t.status}</span>
+        </div>`).join("")}
+    </div>
+    <div id="my-ticket-detail-slot"></div>`;
+  list.querySelectorAll("[data-my-ticket]").forEach(row => row.addEventListener("click", () => {
+    const [guildId, ticketId] = row.dataset.myTicket.split(":");
+    openMyTicketDetail(guildId, ticketId, tickets);
+  }));
+}
+
+async function openMyTicketDetail(guildId, ticketId, tickets) {
+  const root = document.getElementById("picker-panel-root");
+  root.innerHTML = `
+    <button class="btn btn-ghost btn-small" id="mt-back"><i class="ti ti-arrow-left"></i> Back to Tickets</button>
+    <div id="mt-detail-body" style="margin-top:16px">${loadingBlock("Loading ticket…")}</div>`;
+  document.getElementById("mt-back").addEventListener("click", () => renderMyTicketsPanel(root));
+
+  let data;
+  try { data = await api(`/guilds/${guildId}/tickets/${ticketId}/transcript`); }
+  catch (e) {
+    document.getElementById("mt-detail-body").innerHTML = `<div class="empty-state"><i class="ti ti-alert-triangle glyph"></i>Couldn't load this ticket: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  const { ticket, messages, hasLog } = data;
+  const body = document.getElementById("mt-detail-body");
+  body.innerHTML = `
+    <div class="modal-panel" style="max-width:900px;max-height:none">
+      <div class="transcript-header">
+        <div>
+          <h3 style="font-size:16px;font-weight:700">${escapeHtml(ticket.subject || "No subject")}</h3>
+          <div class="field-hint" style="margin-top:2px">
+            <span class="badge badge-${ticket.status}">${ticket.status}</span>
+            · ${escapeHtml(ticket.subject || "General")} · Created ${timeAgoGlobal(ticket.createdAt)}
+            ${ticket.closedBy ? ` · Closed by ${escapeHtml(ticket.closedBy)}` : ""}
+          </div>
+        </div>
+      </div>
+      <div class="transcript-body" style="max-height:60vh">
+        ${!hasLog
+          ? `<div class="empty-state"><i class="ti ti-message-off glyph"></i>No message log available for this ticket.</div>`
+          : messages.length === 0
+            ? `<div class="empty-state"><i class="ti ti-message-off glyph"></i>No messages were sent in this ticket.</div>`
+            : messages.map(m => `
+              <div class="transcript-msg ${m.deleted ? "deleted" : ""}">
+                <img class="transcript-msg-avatar" src="${m.authorAvatar ? escapeHtml(m.authorAvatar) : "https://cdn.discordapp.com/embed/avatars/0.png"}" alt="">
+                <div class="transcript-msg-body">
+                  <div class="transcript-msg-meta">
+                    <span class="transcript-msg-author">${escapeHtml(m.authorName)}</span>
+                    ${m.authorIsStaff ? `<span class="staff-tag">STAFF</span>` : ""}
+                    <span class="transcript-msg-time">${new Date(m.createdAt).toLocaleString()}</span>
+                    ${m.deleted ? `<span class="transcript-msg-deleted-tag"><i class="ti ti-trash"></i> deleted</span>` : ""}
+                  </div>
+                  <div class="transcript-msg-content">${escapeHtml(m.content) || `<span class="field-hint">(no text content)</span>`}</div>
+                </div>
+              </div>`).join("")}
+      </div>
+    </div>`;
+}
+function timeAgoGlobal(iso) {
+  if (!iso) return "—";
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  return days <= 0 ? "today" : `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 // ============================================================
@@ -379,8 +598,7 @@ function buildSidebar() {
 
 async function enterDashboard(panel) {
   showScreen("screen-dashboard");
-  const session = getSession();
-  document.getElementById("dash-user-chip").innerHTML = `<img src="${avatarUrl(session.user)}" alt=""> ${escapeHtml(session.user.username)}`;
+  renderSidebarBottom("dash-sidebar-bottom");
 
   await refreshHeroStatus();
   if (botInfoCache) await ensureModulesLoaded();
@@ -430,15 +648,89 @@ function switchPanel(name, updateUrl = true) {
 // ============================================================
 async function renderStatusModule(root) {
   await refreshHeroStatus();
-  root.innerHTML = `
-    <div class="dash-header"><div><h1>Status</h1><p>Live connection to your locally hosted bot.</p></div></div>
-    <div class="config-section">
-      <div class="config-row"><span class="config-row-label">Bot process</span><span class="status-pip ${botInfoCache?.online ? "online" : "offline"}"><span class="status-dot"></span>${botInfoCache?.online ? "Online" : "Offline"}</span></div>
-      <div class="config-row"><span class="config-row-label">Bot tag</span><span class="config-row-label" style="font-weight:400;color:var(--text-dim)">${escapeHtml(botInfoCache?.botTag || "—")}</span></div>
-      <div class="config-row"><span class="config-row-label">Uptime</span><span class="config-row-label" style="font-weight:400;color:var(--text-dim)">${formatUptime(botInfoCache?.uptimeSeconds)}</span></div>
-      <div class="config-row"><span class="config-row-label">Guilds connected</span><span class="config-row-label" style="font-weight:400;color:var(--text-dim)">${botInfoCache?.guildCount ?? "—"}</span></div>
-      
+  root.innerHTML = `<div class="dash-header"><div><h1>Status</h1><p>Uptime history for your locally hosted bot.</p></div></div><div id="status-body">${loadingBlock()}</div>`;
+  const body = document.getElementById("status-body");
+  if (!botInfoCache) {
+    body.innerHTML = `
+      <div class="status-banner down"><i class="ti ti-alert-triangle"></i> Bot is currently offline</div>
+      <div class="empty-state"><i class="ti ti-plug-connected-x glyph"></i>Can't reach the bot right now — history will still be here once it's back online.</div>`;
+    return;
+  }
+  let history;
+  try { history = await api("/status-history"); } catch { history = null; }
+  if (!history) {
+    body.innerHTML = `<div class="empty-state"><i class="ti ti-alert-triangle glyph"></i>Bot is online, but its history couldn't be loaded.</div>`;
+    return;
+  }
+
+  const days = buildDayBuckets(history.incidents, 90);
+  body.innerHTML = `
+    <div class="status-banner ${history.online ? "up" : "down"}"><i class="ti ${history.online ? "ti-circle-check" : "ti-alert-triangle"}"></i> ${history.online ? "All Systems Operational" : "Bot Offline"}</div>
+    <div class="status-uptime-card">
+      <div class="status-uptime-header">
+        <span>Bot process</span>
+        <span class="status-pip ${history.online ? "online" : "offline"}"><span class="status-dot"></span>${history.online ? "Operational" : "Down"}</span>
+      </div>
+      <div class="status-daybar">
+        ${days.map(d => `<div class="status-day status-day-${d.level}" title="${d.title}"></div>`).join("")}
+      </div>
+      <div class="status-daybar-footer">
+        <span>90 days ago</span>
+        <span>${history.uptimePercent}% uptime</span>
+        <span>Today</span>
+      </div>
+    </div>
+    <div class="overview-grid" style="grid-template-columns:repeat(3,1fr);margin-top:18px">
+      <div class="overview-card"><div class="num">${formatUptime(history.currentUptimeSeconds)}</div><div class="lbl">Current uptime</div></div>
+      <div class="overview-card"><div class="num">${history.uptimePercent}%</div><div class="lbl">Uptime (90 days)</div></div>
+      <div class="overview-card"><div class="num">${history.incidents.length}</div><div class="lbl">Recorded incidents</div></div>
+    </div>
+    <div class="config-section" style="margin-top:18px">
+      <h3>Incident history</h3>
+      <div class="hint">Unplanned downtime the bot detected on its own restart — a clean shutdown (Ctrl+C) is never logged as an incident.</div>
+      ${history.incidents.length === 0
+        ? `<div class="empty-state">No downtime recorded.</div>`
+        : history.incidents.slice(0, 25).map(i => `
+          <div class="config-row">
+            <span class="config-row-label">${new Date(i.startedAt).toLocaleString()}</span>
+            <span class="config-row-label" style="font-weight:400;color:var(--text-dim)">${formatDuration(i.durationSeconds)} downtime</span>
+          </div>`).join("")}
     </div>`;
+}
+
+function buildDayBuckets(incidents, numDays) {
+  const now = new Date();
+  const days = [];
+  for (let i = numDays - 1; i >= 0; i--) {
+    const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0); dayStart.setDate(dayStart.getDate() - i);
+    const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1);
+    const dayIncidents = incidents.filter(inc => {
+      const s = new Date(inc.startedAt), e = new Date(inc.endedAt);
+      return s < dayEnd && e > dayStart;
+    });
+    const downtimeMs = dayIncidents.reduce((sum, inc) => {
+      const s = Math.max(new Date(inc.startedAt).getTime(), dayStart.getTime());
+      const e = Math.min(new Date(inc.endedAt).getTime(), dayEnd.getTime());
+      return sum + Math.max(0, e - s);
+    }, 0);
+    const pctDown = downtimeMs / 86400000;
+    let level = "ok";
+    if (dayStart > now) level = "future";
+    else if (pctDown > 0.1) level = "major";
+    else if (pctDown > 0) level = "minor";
+    days.push({ level, title: `${dayStart.toLocaleDateString()}${downtimeMs > 0 ? ` — ${formatDuration(Math.round(downtimeMs / 1000))} downtime` : " — no downtime recorded"}` });
+  }
+  return days;
+}
+function formatDuration(totalSeconds) {
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const mins = Math.floor(totalSeconds / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (hours < 24) return `${hours}h ${remMins}m`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h`;
 }
 
 // ============================================================
@@ -448,13 +740,11 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("btn-login").addEventListener("click", (e) => { e.preventDefault(); beginLogin(); });
   document.getElementById("btn-invite").addEventListener("click", (e) => { e.preventDefault(); window.open(inviteUrl(), "_blank"); });
   document.getElementById("btn-logout").addEventListener("click", () => { clearSession(); routes.go("/", true); showScreen("screen-landing"); });
-  document.getElementById("btn-logout2").addEventListener("click", () => { clearSession(); routes.go("/", true); showScreen("screen-landing"); });
   document.getElementById("btn-back").addEventListener("click", () => {
     if (window.location.pathname.includes("/servers/")) { routes.go("/dashboard"); enterPicker(); }
     else window.history.back();
   });
-  document.getElementById("btn-theme-picker").addEventListener("click", toggleTheme);
-  document.getElementById("btn-theme-dash").addEventListener("click", toggleTheme);
+  document.getElementById("status-back-btn").addEventListener("click", () => { window.history.back(); });
 
   boot();
   setInterval(async () => {
