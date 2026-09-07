@@ -198,9 +198,15 @@ function renderSidebarBottom(slotId) {
           <div><div class="sidebar-profile-name">${escapeHtml(session.user.username)}</div><div class="field-hint" style="margin-top:1px">@${escapeHtml(session.user.username)}</div></div>
         </div>
         <button class="kebab-menu-item sb-profile-btn"><i class="ti ti-user-circle"></i> Profile</button>
+        <button class="kebab-menu-item sb-admin-panel-btn" style="display:none"><i class="ti ti-shield-lock"></i> Admin Panel</button>
         <button class="kebab-menu-item danger sb-logout-btn"><i class="ti ti-logout"></i> Log out</button>
       </div>
     </div>`;
+
+  // Admin Panel entry only shows for the bot owner or someone already
+  // granted admin access — checked against the server, never guessed
+  // client-side, so a random Discord account never even sees the option.
+  maybeShowAdminPanelButton(slot);
 
   // Every query below is scoped to `slot`, not the whole document — three
   // screens (picker/dashboard/status) each have their own sidebar-bottom
@@ -216,6 +222,7 @@ function renderSidebarBottom(slotId) {
   const trigger = slot.querySelector(".sb-profile-trigger");
   const profileBtn = slot.querySelector(".sb-profile-btn");
   const logoutBtn = slot.querySelector(".sb-logout-btn");
+  const adminPanelBtn = slot.querySelector(".sb-admin-panel-btn");
 
   statusLink.addEventListener("click", (e) => { e.preventDefault(); enterStatusPage(); });
   themeToggle.addEventListener("click", (e) => {
@@ -247,6 +254,31 @@ function renderSidebarBottom(slotId) {
   });
   logoutBtn.addEventListener("click", () => { clearSession(); routes.go("/", true); showScreen("screen-landing"); });
   profileBtn.addEventListener("click", () => { menu.style.display = "none"; /* no dedicated profile page yet */ });
+  adminPanelBtn.addEventListener("click", () => {
+    menu.style.display = "none";
+    pickerActivePanel = "admin";
+    routes.go("/admin");
+    enterPicker("admin");
+  });
+}
+
+// Whether the currently logged-in Discord account is allowed into the
+// Admin Panel at all (bot owner, or already granted access). This is a
+// UI convenience only — every actual admin route still re-checks server-
+// side, so hiding/showing this button is never itself a security boundary.
+let adminEligibilityCache = null;
+async function maybeShowAdminPanelButton(slot) {
+  const btn = slot.querySelector(".sb-admin-panel-btn");
+  if (!btn) return;
+  const session = getSession();
+  if (!session?.user?.id) return;
+  if (adminEligibilityCache === null) {
+    try {
+      const result = await api(`/admin/eligibility?discordUserId=${session.user.id}`);
+      adminEligibilityCache = Boolean(result.eligible);
+    } catch { adminEligibilityCache = false; }
+  }
+  if (adminEligibilityCache) btn.style.display = "flex";
 }
 
 async function enterStatusPage() {
@@ -494,8 +526,8 @@ function paintAdminLogin(root) {
     <h1 class="picker-heading">Admin Panel</h1>
     <p class="picker-sub">Sign in with the shared admin credentials. Your Discord account also needs to be granted access.</p>
     <div class="config-section" style="max-width:380px">
-      <div class="field"><label>Username</label><input type="text" id="admin-username" autocomplete="username"></div>
-      <div class="field"><label>Password</label><input type="password" id="admin-password" autocomplete="current-password"></div>
+      <div class="field"><label>Username</label><input type="text" id="admin-username" autocomplete="username" placeholder="Username"></div>
+      <div class="field"><label>Password</label><input type="text" id="admin-password" autocomplete="username" placeholder="Password" class="admin-password-as-username"></div>
       <div class="field-hint" id="admin-login-error" style="color:var(--red);display:none"></div>
       <button class="btn btn-primary btn-small" id="admin-login-btn" style="margin-top:6px">Log in</button>
     </div>`;
@@ -554,21 +586,39 @@ async function paintAdminGuildsList() {
     const guildsResult = await adminApi("/admin/guilds");
     const allowedGuildIds = guildsResult.allowedGuildIds;
     const knownGuilds = guildsResult.knownGuilds;
+    // Empty allow-list means "every server is allowed" (fail-open default),
+    // not "every server is individually toggled on" — those are different
+    // states. Toggling a switch off in that mode should add every OTHER
+    // known server to the list (so the one just switched off is excluded
+    // while everything else keeps working), rather than adding just the
+    // one clicked, which would silently flip into allow-list mode and lock
+    // out every other server nobody touched.
+    const noRestriction = allowedGuildIds.length === 0;
     if (knownGuilds.length === 0) { slot.innerHTML = `<div class="empty-state">The bot isn't in any servers yet.</div>`; return; }
-    slot.innerHTML = knownGuilds.map(g => `
+    slot.innerHTML = `
+      ${noRestriction ? `<div class="field-hint" style="margin-bottom:10px"><i class="ti ti-info-circle"></i> No restriction is active — every server below is currently allowed. Turning one off will switch to an explicit allow-list.</div>` : ""}
+      ${knownGuilds.map(g => `
       <div class="config-row">
         <span class="config-row-label" style="display:flex;align-items:center;gap:8px">
           ${g.icon ? `<img src="https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png" style="width:22px;height:22px;border-radius:6px" alt="">` : `<span class="server-icon" style="width:22px;height:22px;font-size:9px;margin:0">${initials(g.name)}</span>`}
           ${escapeHtml(g.name)}
         </span>
-        <button class="toggle ${allowedGuildIds.length === 0 || allowedGuildIds.includes(g.id) ? "on" : ""}" data-guild-toggle="${g.id}" aria-label="Toggle ${g.name}"></button>
-      </div>`).join("");
+        <button class="toggle ${noRestriction || allowedGuildIds.includes(g.id) ? "on" : ""}" data-guild-toggle="${g.id}" aria-label="Toggle ${g.name}"></button>
+      </div>`).join("")}`;
     slot.querySelectorAll("[data-guild-toggle]").forEach(btn => btn.addEventListener("click", async () => {
       const guildId = btn.dataset.guildToggle;
       const isAllowing = !btn.classList.contains("on");
       try {
-        if (isAllowing) await adminApi("/admin/guilds", { method: "POST", body: JSON.stringify({ guildId }) });
-        else await adminApi(`/admin/guilds/${guildId}`, { method: "DELETE" });
+        if (noRestriction && !isAllowing) {
+          // Switching one off while nothing was restricted yet: build the
+          // explicit allow-list as "every known server except this one".
+          const others = knownGuilds.map(g => g.id).filter(id => id !== guildId);
+          for (const id of others) await adminApi("/admin/guilds", { method: "POST", body: JSON.stringify({ guildId: id }) });
+        } else if (isAllowing) {
+          await adminApi("/admin/guilds", { method: "POST", body: JSON.stringify({ guildId }) });
+        } else {
+          await adminApi(`/admin/guilds/${guildId}`, { method: "DELETE" });
+        }
         await paintAdminGuildsList();
       } catch (e) { alert(`Couldn't update: ${e.message}`); }
     }));
@@ -591,13 +641,19 @@ async function paintAdminAdminsList() {
     const adminsResult = await adminApi("/admin/admins");
     const ownerUserId = adminsResult.ownerUserId;
     const grantedUserIds = adminsResult.grantedUserIds;
-    slot.innerHTML = `
-      <div class="config-row"><span class="config-row-label">${escapeHtml(ownerUserId)}</span><span class="badge badge-open">Owner</span></div>
-      ${grantedUserIds.length === 0 ? "" : grantedUserIds.map(id => `
+    const profiles = adminsResult.profiles || {};
+    const rowHtml = (id, isOwner) => {
+      const p = profiles[id] || { displayName: id, avatarUrl: null };
+      return `
         <div class="config-row">
-          <span class="config-row-label">${escapeHtml(id)}</span>
-          <button class="btn btn-ghost btn-small" data-revoke-admin="${id}"><i class="ti ti-x"></i> Revoke</button>
-        </div>`).join("")}`;
+          <span class="config-row-label" style="display:flex;align-items:center;gap:8px">
+            <img src="${p.avatarUrl || `https://cdn.discordapp.com/embed/avatars/0.png`}" alt="" style="width:26px;height:26px;border-radius:50%;border:1px solid var(--panel-border)">
+            <span>${escapeHtml(p.displayName)}<div class="field-hint" style="margin-top:1px">${escapeHtml(id)}</div></span>
+          </span>
+          ${isOwner ? `<span class="badge badge-open">Owner</span>` : `<button class="btn btn-ghost btn-small" data-revoke-admin="${id}"><i class="ti ti-x"></i> Revoke</button>`}
+        </div>`;
+    };
+    slot.innerHTML = rowHtml(ownerUserId, true) + grantedUserIds.map(id => rowHtml(id, false)).join("");
     slot.querySelectorAll("[data-revoke-admin]").forEach(btn => btn.addEventListener("click", async () => {
       try { await adminApi(`/admin/admins/${btn.dataset.revokeAdmin}`, { method: "DELETE" }); await paintAdminAdminsList(); }
       catch (e) { alert(`Couldn't revoke: ${e.message}`); }
@@ -867,6 +923,12 @@ async function enterDashboard(panel) {
       sub.innerHTML = meta.viewerRole === "owner" ? `<span class="role-badge owner"><i class="ti ti-crown"></i> Owner</span>` : `<span class="role-badge admin"><i class="ti ti-shield"></i> Admin</span>`;
     } else {
       sub.textContent = "Connected";
+    }
+    if (meta && meta.allowed === false) {
+      buildSidebar(guildDisabledModules);
+      document.getElementById("module-root").innerHTML = `
+        <div class="empty-state" style="max-width:520px;margin:40px auto"><i class="ti ti-lock-off glyph"></i>${escapeHtml(meta.notAllowedMessage || "This server isn't authorized to use this tool.")}</div>`;
+      return;
     }
   } else {
     sub.textContent = "Bot Servers down";
