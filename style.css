@@ -100,6 +100,8 @@ html { scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; 
 .user-chip img { width: 25px; height: 25px; border-radius: 50%; border: 1px solid var(--panel-border); }
 .icon-btn { width: 34px; height: 34px; border-radius: 8px; background: var(--input-bg); border: 1px solid var(--panel-border); display: grid; place-items: center; color: var(--text-dim); font-size: 15px; transition: color .12s, border-color .12s; flex-shrink: 0; }
 .icon-btn:hover { color: var(--text); border-color: var(--violet); }
+.icon-btn-emoji { font-size: 13px; line-height: 1; }
+.icon-btn-emoji.danger:hover { border-color: var(--red); }
 .crumb { font-size: 13px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crumb b { color: var(--text); font-weight: 600; }
 
@@ -180,7 +182,7 @@ html { scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; 
 .status-day-major { background: var(--red); }
 .status-day-future { background: var(--panel-border); opacity: .4; cursor: default; }
 .status-daybar-footer { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); margin-top: 8px; }
-.status-day-tooltip { position: absolute; top: 58px; transform: translateX(-50%); background: var(--panel-solid); border: 1px solid var(--panel-border); border-radius: 10px; padding: 12px 14px; min-width: 200px; box-shadow: 0 12px 30px -8px rgba(0,0,0,.5); z-index: 50; pointer-events: none; }
+.status-day-tooltip { position: absolute; top: 58px; transform: translateX(-50%); background: var(--panel-solid); border: 1px solid var(--panel-border); border-radius: 10px; padding: 12px 14px; width: 220px; box-shadow: 0 12px 30px -8px rgba(0,0,0,.5); z-index: 50; pointer-events: none; }
 .status-day-tooltip-date { font-size: 12.5px; font-weight: 700; margin-bottom: 6px; }
 .status-day-tooltip-row { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; }
 .status-day-tooltip-row.ok { color: var(--green); }
@@ -293,7 +295,10 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--v
 .config-row select { max-width: 220px; }
 
 /* ---------- Panels module ---------- */
-.panel-preview { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; padding: 18px; max-width: 520px; }
+.panel-preview { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px 12px 0 0; padding: 18px; max-width: 520px; border-bottom: none; }
+.panel-card-wrap { max-width: 520px; margin-bottom: 26px; }
+.panel-card-wrap:last-child { margin-bottom: 0; }
+.panel-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--panel); border: 1px solid var(--panel-border); border-top: 1px solid var(--panel-border); border-radius: 0 0 12px 12px; padding: 10px 16px; }
 .panel-preview-embed { border-left: 3px solid var(--violet); padding-left: 12px; }
 .panel-preview-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
 .panel-preview-desc { font-size: 12.5px; color: var(--text-dim); margin-bottom: 10px; }
