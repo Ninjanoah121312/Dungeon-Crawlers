@@ -445,3 +445,9 @@ textarea.embed-inline-input.embed-card-desc { font-size: 13px; color: var(--text
 .tt-tab.active { color: var(--violet); border-bottom-color: var(--violet); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* Admin panel: the password field is deliberately type="text" so it reads
+   as a second username-style box rather than a masked password input
+   (per the requested look) — no functional difference to the login call. */
+.admin-password-as-username { -webkit-text-security: none; }
+.sb-admin-panel-btn { display: flex; }
