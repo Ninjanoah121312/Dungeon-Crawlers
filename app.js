@@ -27,6 +27,7 @@ const routes = {
     if (parts[0] === "dashboard") return { screen: "picker", panel: "dashboard" };
     if (parts[0] === "my-tickets") return { screen: "picker", panel: "my-tickets" };
     if (parts[0] === "premium") return { screen: "picker", panel: "premium" };
+    if (parts[0] === "admin") return { screen: "picker", panel: "admin" };
     if (parts[0] === "status") return { screen: "status" };
     if (parts[0] === "servers" && parts[1]) return { screen: "dashboard", guildId: parts[1], panel: parts[2] || "ticket-tool" };
     return { screen: "landing" };
@@ -181,30 +182,48 @@ function renderSidebarBottom(slotId) {
   const isDark = document.body.getAttribute("data-theme") !== "light";
   slot.innerHTML = `
     <div class="sidebar-bottom">
-      <a href="#" class="nav-item" id="sb-status-link"><i class="ti ti-activity"></i> Status</a>
+      <a href="#" class="nav-item sb-status-link"><i class="ti ti-activity"></i> Status</a>
       <div class="sidebar-theme-row">
         <span><i class="ti ${isDark ? "ti-moon" : "ti-sun"}"></i> ${isDark ? "Dark" : "Light"} mode</span>
-        <button class="toggle ${isDark ? "on" : ""}" id="sb-theme-toggle" aria-label="Toggle theme"></button>
+        <button class="toggle sb-theme-toggle ${isDark ? "on" : ""}" aria-label="Toggle theme"></button>
       </div>
-      <div class="sidebar-profile" id="sb-profile-trigger">
+      <div class="sidebar-profile sb-profile-trigger">
         <img class="sidebar-profile-avatar" src="${avatarUrl(session.user)}" alt="">
         <div class="sidebar-profile-name">${escapeHtml(session.user.username)}</div>
         <i class="ti ti-chevron-up" style="margin-left:auto;color:var(--text-dim);font-size:14px"></i>
       </div>
-      <div class="sidebar-profile-menu" id="sb-profile-menu" style="display:none">
+      <div class="sidebar-profile-menu sb-profile-menu" style="display:none">
         <div class="sidebar-profile-menu-header">
           <img class="sidebar-profile-avatar" src="${avatarUrl(session.user)}" alt="">
-          <div><div class="sidebar-profile-name">${escapeHtml(session.user.username)}</div></div>
+          <div><div class="sidebar-profile-name">${escapeHtml(session.user.username)}</div><div class="field-hint" style="margin-top:1px">@${escapeHtml(session.user.username)}</div></div>
         </div>
-        <button class="kebab-menu-item" id="sb-profile-btn"><i class="ti ti-user-circle"></i> Profile</button>
-        <button class="kebab-menu-item danger" id="sb-logout-btn"><i class="ti ti-logout"></i> Log out</button>
+        <button class="kebab-menu-item sb-profile-btn"><i class="ti ti-user-circle"></i> Profile</button>
+        <button class="kebab-menu-item danger sb-logout-btn"><i class="ti ti-logout"></i> Log out</button>
       </div>
     </div>`;
 
-  document.getElementById("sb-status-link").addEventListener("click", (e) => { e.preventDefault(); enterStatusPage(); });
-  document.getElementById("sb-theme-toggle").addEventListener("click", (e) => { toggleTheme(); e.target.classList.toggle("on"); document.querySelectorAll(".sidebar-theme-row span").forEach(s => s.innerHTML = `<i class="ti ${document.body.getAttribute("data-theme") !== "light" ? "ti-moon" : "ti-sun"}"></i> ${document.body.getAttribute("data-theme") !== "light" ? "Dark" : "Light"} mode`); });
-  const menu = document.getElementById("sb-profile-menu");
-  const trigger = document.getElementById("sb-profile-trigger");
+  // Every query below is scoped to `slot`, not the whole document — three
+  // screens (picker/dashboard/status) each have their own sidebar-bottom
+  // container present in the DOM at the same time (only one is ever
+  // visible via the .active class), so a global getElementById/querySelector
+  // here would always resolve to whichever screen's copy rendered first
+  // and silently wire up listeners on the wrong, invisible one. That was
+  // the actual cause of "the Status link / theme toggle / profile menu
+  // don't react" — the visible screen's buttons had no listeners at all.
+  const statusLink = slot.querySelector(".sb-status-link");
+  const themeToggle = slot.querySelector(".sb-theme-toggle");
+  const menu = slot.querySelector(".sb-profile-menu");
+  const trigger = slot.querySelector(".sb-profile-trigger");
+  const profileBtn = slot.querySelector(".sb-profile-btn");
+  const logoutBtn = slot.querySelector(".sb-logout-btn");
+
+  statusLink.addEventListener("click", (e) => { e.preventDefault(); enterStatusPage(); });
+  themeToggle.addEventListener("click", (e) => {
+    toggleTheme();
+    e.currentTarget.classList.toggle("on");
+    const isDarkNow = document.body.getAttribute("data-theme") !== "light";
+    slot.querySelector(".sidebar-theme-row span").innerHTML = `<i class="ti ${isDarkNow ? "ti-moon" : "ti-sun"}"></i> ${isDarkNow ? "Dark" : "Light"} mode`;
+  });
   function closeMenuOnOutsideClick(e) {
     if (!menu.contains(e.target) && !trigger.contains(e.target)) {
       menu.style.display = "none";
@@ -226,8 +245,8 @@ function renderSidebarBottom(slotId) {
       document.addEventListener("click", closeMenuOnOutsideClick, true);
     }
   });
-  document.getElementById("sb-logout-btn").addEventListener("click", () => { clearSession(); routes.go("/", true); showScreen("screen-landing"); });
-  document.getElementById("sb-profile-btn").addEventListener("click", () => { menu.style.display = "none"; /* no dedicated profile page yet */ });
+  logoutBtn.addEventListener("click", () => { clearSession(); routes.go("/", true); showScreen("screen-landing"); });
+  profileBtn.addEventListener("click", () => { menu.style.display = "none"; /* no dedicated profile page yet */ });
 }
 
 async function enterStatusPage() {
@@ -370,6 +389,7 @@ async function renderPickerPanel(panel) {
   const root = document.getElementById("picker-panel-root");
   if (panel === "my-tickets") return renderMyTicketsPanel(root);
   if (panel === "premium") return renderPremiumPanel(root);
+  if (panel === "admin") return renderAdminPanel(root);
   return renderDashboardPanel(root);
 }
 
@@ -429,6 +449,164 @@ function renderPremiumPanel(root) {
     <p class="picker-sub">Unlock higher limits and advanced features across every server.</p>
     <div class="empty-state"><i class="ti ti-crown glyph"></i>Premium plans aren't set up yet — check back soon.</div>`;
 }
+
+// ============================================================
+// Admin panel — separate auth layer (username/password against .env,
+// gated further by Discord user id) for controlling which guilds are
+// allowed to use the tool and who else can manage that.
+// ============================================================
+const ADMIN_TOKEN_KEY = "tk_admin_token";
+function getAdminToken() { return localStorage.getItem(ADMIN_TOKEN_KEY); }
+function setAdminToken(t) { t ? localStorage.setItem(ADMIN_TOKEN_KEY, t) : localStorage.removeItem(ADMIN_TOKEN_KEY); }
+async function adminApi(path, options = {}) {
+  const res = await fetch(`${CFG.LOCAL_BOT_URL}${path}`, {
+    ...options,
+    headers: { "Content-Type": "application/json", "X-Admin-Token": getAdminToken() || "", ...(options.headers || {}) },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (res.status === 401) { setAdminToken(null); throw new Error("Session expired — please log in again"); }
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.json()).error; } catch {}
+    throw new Error(detail || `Request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+async function renderAdminPanel(root) {
+  root.innerHTML = `<h1 class="picker-heading">Admin Panel</h1><p class="picker-sub">Loading…</p>`;
+  if (!botInfoCache) {
+    root.innerHTML = `<h1 class="picker-heading">Admin Panel</h1><div class="empty-state"><i class="ti ti-plug-connected-x glyph"></i>Bot Servers down — the admin panel needs a live connection.</div>`;
+    return;
+  }
+  const token = getAdminToken();
+  if (!token) { paintAdminLogin(root); return; }
+  try {
+    const session = await adminApi("/admin/session");
+    paintAdminDashboard(root, session);
+  } catch {
+    paintAdminLogin(root);
+  }
+}
+
+function paintAdminLogin(root) {
+  root.innerHTML = `
+    <h1 class="picker-heading">Admin Panel</h1>
+    <p class="picker-sub">Sign in with the shared admin credentials. Your Discord account also needs to be granted access.</p>
+    <div class="config-section" style="max-width:380px">
+      <div class="field"><label>Username</label><input type="text" id="admin-username" autocomplete="username"></div>
+      <div class="field"><label>Password</label><input type="password" id="admin-password" autocomplete="current-password"></div>
+      <div class="field-hint" id="admin-login-error" style="color:var(--red);display:none"></div>
+      <button class="btn btn-primary btn-small" id="admin-login-btn" style="margin-top:6px">Log in</button>
+    </div>`;
+  document.getElementById("admin-login-btn").addEventListener("click", async () => {
+    const username = document.getElementById("admin-username").value.trim();
+    const password = document.getElementById("admin-password").value;
+    const errEl = document.getElementById("admin-login-error");
+    errEl.style.display = "none";
+    try {
+      const session = getSession();
+      const loginResult = await adminApi("/admin/login", { method: "POST", body: JSON.stringify({ username, password, discordUserId: session.user.id }) });
+      setAdminToken(loginResult.token);
+      renderAdminPanel(document.getElementById("picker-panel-root"));
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = "block";
+    }
+  });
+}
+
+async function paintAdminDashboard(root, session) {
+  root.innerHTML = `
+    <div class="dash-header">
+      <div><h1 class="picker-heading">Admin Panel</h1><p class="picker-sub">${session.isOwner ? "Signed in as the bot owner." : "Signed in with granted admin access."}</p></div>
+      <button class="btn btn-ghost btn-small" id="admin-logout-btn"><i class="ti ti-logout"></i> Log out</button>
+    </div>
+    <div class="config-section">
+      <h3>Allowed servers</h3>
+      <div class="hint">Only servers in this list can use the ticket tool. Leave empty to allow every server the bot is in (default, until you add the first one).</div>
+      <div id="admin-guilds-list">${loadingBlock()}</div>
+    </div>
+    ${session.isOwner ? `
+    <div class="config-section" style="margin-top:18px">
+      <h3>Granted admins</h3>
+      <div class="hint">Discord user ids that can log into this panel, in addition to you as the owner.</div>
+      <div class="field-row-inline" style="margin-bottom:10px">
+        <input type="text" id="admin-add-userid" placeholder="Discord user id" style="flex:1">
+        <button class="btn btn-primary btn-small" id="admin-add-btn">Grant access</button>
+      </div>
+      <div id="admin-admins-list">${loadingBlock()}</div>
+    </div>` : ""}`;
+
+  document.getElementById("admin-logout-btn").addEventListener("click", async () => {
+    try { await adminApi("/admin/logout", { method: "POST" }); } catch {}
+    setAdminToken(null);
+    renderAdminPanel(root);
+  });
+
+  await paintAdminGuildsList();
+  if (session.isOwner) await paintAdminAdminsList();
+}
+
+async function paintAdminGuildsList() {
+  const slot = document.getElementById("admin-guilds-list");
+  try {
+    const guildsResult = await adminApi("/admin/guilds");
+    const allowedGuildIds = guildsResult.allowedGuildIds;
+    const knownGuilds = guildsResult.knownGuilds;
+    if (knownGuilds.length === 0) { slot.innerHTML = `<div class="empty-state">The bot isn't in any servers yet.</div>`; return; }
+    slot.innerHTML = knownGuilds.map(g => `
+      <div class="config-row">
+        <span class="config-row-label" style="display:flex;align-items:center;gap:8px">
+          ${g.icon ? `<img src="https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png" style="width:22px;height:22px;border-radius:6px" alt="">` : `<span class="server-icon" style="width:22px;height:22px;font-size:9px;margin:0">${initials(g.name)}</span>`}
+          ${escapeHtml(g.name)}
+        </span>
+        <button class="toggle ${allowedGuildIds.length === 0 || allowedGuildIds.includes(g.id) ? "on" : ""}" data-guild-toggle="${g.id}" aria-label="Toggle ${g.name}"></button>
+      </div>`).join("");
+    slot.querySelectorAll("[data-guild-toggle]").forEach(btn => btn.addEventListener("click", async () => {
+      const guildId = btn.dataset.guildToggle;
+      const isAllowing = !btn.classList.contains("on");
+      try {
+        if (isAllowing) await adminApi("/admin/guilds", { method: "POST", body: JSON.stringify({ guildId }) });
+        else await adminApi(`/admin/guilds/${guildId}`, { method: "DELETE" });
+        await paintAdminGuildsList();
+      } catch (e) { alert(`Couldn't update: ${e.message}`); }
+    }));
+  } catch (e) {
+    slot.innerHTML = `<div class="empty-state">Couldn't load servers: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function paintAdminAdminsList() {
+  const slot = document.getElementById("admin-admins-list");
+  const addBtn = document.getElementById("admin-add-btn");
+  if (addBtn) addBtn.addEventListener("click", async () => {
+    const input = document.getElementById("admin-add-userid");
+    const userId = input.value.trim();
+    if (!userId) return;
+    try { await adminApi("/admin/admins", { method: "POST", body: JSON.stringify({ userId }) }); input.value = ""; await paintAdminAdminsList(); }
+    catch (e) { alert(`Couldn't grant access: ${e.message}`); }
+  });
+  try {
+    const adminsResult = await adminApi("/admin/admins");
+    const ownerUserId = adminsResult.ownerUserId;
+    const grantedUserIds = adminsResult.grantedUserIds;
+    slot.innerHTML = `
+      <div class="config-row"><span class="config-row-label">${escapeHtml(ownerUserId)}</span><span class="badge badge-open">Owner</span></div>
+      ${grantedUserIds.length === 0 ? "" : grantedUserIds.map(id => `
+        <div class="config-row">
+          <span class="config-row-label">${escapeHtml(id)}</span>
+          <button class="btn btn-ghost btn-small" data-revoke-admin="${id}"><i class="ti ti-x"></i> Revoke</button>
+        </div>`).join("")}`;
+    slot.querySelectorAll("[data-revoke-admin]").forEach(btn => btn.addEventListener("click", async () => {
+      try { await adminApi(`/admin/admins/${btn.dataset.revokeAdmin}`, { method: "DELETE" }); await paintAdminAdminsList(); }
+      catch (e) { alert(`Couldn't revoke: ${e.message}`); }
+    }));
+  } catch (e) {
+    slot.innerHTML = `<div class="empty-state">Couldn't load admins: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
 
 // ============================================================
 // My Tickets — every ticket the logged-in user has personally
@@ -545,9 +723,7 @@ function timeAgoGlobal(iso) {
 // ============================================================
 // Dashboard shell
 // ============================================================
-const CORE_PANELS = [
-  { id: "status", label: "Status", icon: "ti-activity" },
-];
+const CORE_PANELS = [];
 
 let modulesLoaded = false;
 let modulesLoadFailed = false;
@@ -597,39 +773,68 @@ function buildContext() {
   };
 }
 
-function navItemHtml(id, icon, label, toggleable) {
-  return `<div class="nav-item" data-panel="${id}">
+function navItemHtml(id, icon, label, toggleable, isEnabled) {
+  const disabledClass = toggleable && !isEnabled ? "module-disabled" : "";
+  return `<div class="nav-item ${disabledClass}" data-panel="${id}">
     <i class="ti ${icon}" aria-hidden="true"></i><span class="nav-item-label">${label}</span>
-    ${toggleable ? `<button class="nav-item-toggle-btn" data-module-toggle="${id}" title="Disable module" aria-label="Disable ${label}"><i class="ti ti-toggle-right"></i></button>` : ""}
+    ${toggleable ? `<button class="toggle nav-item-toggle ${isEnabled ? "on" : ""}" data-module-toggle="${id}" aria-label="Toggle ${label}"></button>` : ""}
   </div>`;
 }
 
 function buildSidebar(disabledModules) {
   disabledModules = disabledModules || [];
   const wrap = document.getElementById("dash-nav-items");
-  const modules = (window.DC?.modules || []).filter(m => !disabledModules.includes(m.id));
+  const modules = window.DC?.modules || [];
 
+  // Toggling a module off is purely cosmetic — it never disappears from
+  // this list or stops working. The switch just visually greys the label
+  // out as a personal "I've turned this off" marker; the module panel
+  // stays fully clickable either way.
   const modulesHtml = modules.length
-    ? `<div class="nav-section-label">Modules</div>${modules.map(m => navItemHtml(m.id, m.icon, m.label, true)).join("")}`
+    ? `<div class="nav-section-label">Modules</div>${modules.map(m => navItemHtml(m.id, m.icon, m.label, true, !disabledModules.includes(m.id))).join("")}`
     : "";
-  const generalHtml = `<div class="nav-section-label">General</div>${CORE_PANELS.map(p => navItemHtml(p.id, p.icon, p.label, false)).join("")}`;
+  const generalHtml = CORE_PANELS.length ? `<div class="nav-section-label">General</div>${CORE_PANELS.map(p => navItemHtml(p.id, p.icon, p.label, false)).join("")}` : "";
 
   wrap.innerHTML = modulesHtml + generalHtml;
   wrap.querySelectorAll(".nav-item").forEach(n => n.addEventListener("click", (e) => {
     if (e.target.closest("[data-module-toggle]")) return; // the toggle button handles its own click
     switchPanel(n.dataset.panel);
   }));
-  wrap.querySelectorAll("[data-module-toggle]").forEach(btn => btn.addEventListener("click", async (e) => {
+  wrap.querySelectorAll("[data-module-toggle]").forEach(btn => btn.addEventListener("click", (e) => {
     e.stopPropagation();
     const moduleId = btn.dataset.moduleToggle;
-    if (!confirm(`Disable the "${moduleId}" module for this server? You can re-enable it later from Server Settings.`)) return;
-    try {
-      await api(`/guilds/${currentGuild.id}/modules/${moduleId}`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
-      currentGuildDisabledModules = [...disabledModules, moduleId];
-      buildSidebar(currentGuildDisabledModules);
-      switchPanel("status"); // the just-disabled module's panel is no longer valid to stay on
-    } catch (e2) { alert(`Couldn't disable module: ${e2.message}`); }
+    const turningOn = !btn.classList.contains("on");
+    openModuleToggleConfirm(moduleId, turningOn, btn, disabledModules);
   }));
+}
+
+function openModuleToggleConfirm(moduleId, turningOn, btn, disabledModules) {
+  const label = (window.DC?.modules || []).find(m => m.id === moduleId)?.label || moduleId;
+  let overlay = document.getElementById("module-toggle-overlay");
+  if (overlay) overlay.remove();
+  overlay = document.createElement("div");
+  overlay.id = "module-toggle-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-panel" style="max-width:380px;max-height:none;padding:20px">
+      <h3 style="font-size:14.5px;font-weight:700;margin-bottom:8px">${turningOn ? "Turn on" : "Turn off"} ${escapeHtml(label)}?</h3>
+      <p class="field-hint" style="margin-bottom:16px">This is just a personal marker — ${escapeHtml(label)} keeps working normally either way, this only changes how it looks in your sidebar.</p>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button class="btn btn-ghost btn-small" id="mtc-cancel">Cancel</button>
+        <button class="btn btn-primary btn-small" id="mtc-confirm">${turningOn ? "Turn on" : "Turn off"}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  document.getElementById("mtc-cancel").addEventListener("click", () => overlay.remove());
+  document.getElementById("mtc-confirm").addEventListener("click", async () => {
+    overlay.remove();
+    try {
+      await api(`/guilds/${currentGuild.id}/modules/${moduleId}`, { method: "PUT", body: JSON.stringify({ enabled: turningOn }) });
+      currentGuildDisabledModules = turningOn ? disabledModules.filter(id => id !== moduleId) : [...disabledModules, moduleId];
+      buildSidebar(currentGuildDisabledModules);
+    } catch (e2) { alert(`Couldn't update module: ${e2.message}`); }
+  });
 }
 
 async function enterDashboard(panel) {
@@ -760,18 +965,8 @@ async function paintStatusModulesList() {
     slot.innerHTML = modules.map(m => `
       <div class="config-row">
         <span class="config-row-label"><i class="ti ${m.icon}" style="margin-right:8px;color:var(--text-dim)"></i>${escapeHtml(m.label)}</span>
-        <button class="toggle ${!disabled.includes(m.id) ? "on" : ""}" data-status-module-toggle="${m.id}" aria-label="Toggle ${m.label}"></button>
+        <span class="badge badge-${disabled.includes(m.id) ? "closed" : "open"}">${disabled.includes(m.id) ? "Off" : "On"}</span>
       </div>`).join("");
-    slot.querySelectorAll("[data-status-module-toggle]").forEach(btn => btn.addEventListener("click", async () => {
-      const moduleId = btn.dataset.statusModuleToggle;
-      const nowEnabled = !btn.classList.contains("on");
-      try {
-        await api(`/guilds/${currentGuild.id}/modules/${moduleId}`, { method: "PUT", body: JSON.stringify({ enabled: nowEnabled }) });
-        btn.classList.toggle("on");
-        currentGuildDisabledModules = nowEnabled ? currentGuildDisabledModules.filter(id => id !== moduleId) : [...currentGuildDisabledModules, moduleId];
-        buildSidebar(currentGuildDisabledModules);
-      } catch (e) { alert(`Couldn't update module: ${e.message}`); }
-    }));
   } catch {
     slot.innerHTML = `<div class="empty-state">Couldn't load module list.</div>`;
   }
@@ -793,7 +988,10 @@ function wireStatusDayTooltips(days) {
         ` : `<div class="status-day-tooltip-row ok"><i class="ti ti-check"></i> No downtime recorded</div>`}`;
       const rect = el.getBoundingClientRect();
       const barRect = bar.getBoundingClientRect();
-      tooltip.style.left = `${rect.left - barRect.left + rect.width / 2}px`;
+      const tooltipWidth = 220; // matches min-width + padding below
+      const idealLeft = rect.left - barRect.left + rect.width / 2;
+      const clampedLeft = Math.max(tooltipWidth / 2, Math.min(barRect.width - tooltipWidth / 2, idealLeft));
+      tooltip.style.left = `${clampedLeft}px`;
       tooltip.style.display = "block";
     });
     el.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
