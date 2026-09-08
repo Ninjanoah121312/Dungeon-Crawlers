@@ -15,7 +15,7 @@
     <div>
       <div class="brand-row"><div class="brand-glyph">DC</div>Dungeon Crawlers</div>
       <h1 class="landing-title">Tickets that<br><span class="accent">never fall through</span></h1>
-      <p class="landing-sub">Invite the bot, sign in with Discord, and manage every open ticket across your servers from one dashboard. No paid hosting — you run the bot, you own the data.</p>
+      <p class="landing-sub">Invite the bot, sign in with Discord, and manage every open ticket across your servers from one dashboard.</p>
       <div class="landing-actions">
         <a href="#" id="btn-invite" class="btn btn-primary"><i class="ti ti-plus"></i> Invite to server</a>
         <a href="#" id="btn-login" class="btn btn-ghost">Open dashboard</a>
@@ -49,8 +49,9 @@
       <div class="nav-item active" data-picker-panel="dashboard"><i class="ti ti-home"></i> Dashboard</div>
       <div class="nav-item" data-picker-panel="my-tickets"><i class="ti ti-ticket"></i> My Tickets</div>
       <div class="nav-item premium" data-picker-panel="premium"><i class="ti ti-crown"></i> Premium</div>
-      <div class="nav-section-label">Admin</div>
-      <div class="nav-item" data-picker-panel="admin"><i class="ti ti-shield-lock"></i> Admin Panel</div>
+      <!-- Admin Panel is intentionally not a sidebar entry — it's reachable
+           only from the profile menu at the bottom of this sidebar, and
+           only for the bot owner or a granted admin (see maybeShowAdminPanelButton). -->
       <div class="app-sidebar-spacer"></div>
       <div id="picker-sidebar-bottom"></div>
     </nav>
@@ -107,15 +108,27 @@
   </div>
 </section>
 
-<footer class="site-footer">Dungeon Crawlers runs on a bot you host yourself. This page never sees your bot token or client secret.</footer>
+<!-- ============ PUBLIC SHARE VIEW (read-only ticket link) ============ -->
+<section id="screen-share" class="screen">
+  <div class="share-page-wrap">
+    <div id="share-root"></div>
+  </div>
+</section>
+
+<!-- Shared modal system mounts here. One root, one at a time — every
+     module (built-in or custom) opens dialogs through window.DC.modal
+     instead of window.confirm/alert or its own bespoke overlay markup,
+     so every popup in the app looks and behaves the same way. -->
+<div id="dc-modal-root"></div>
+
+<footer class="site-footer">Dungeon Crawlers runs on a bot you host yourself.</footer>
 
 <script>
   // GitHub Pages serves static files with long browser cache lifetimes,
-  // so after every deploy the browser can keep serving a stale app.js
-  // (this bit people before — a hard refresh "fixed" a phantom "bot
-  // down" that was really just an old cached script). Loading these two
-  // with a timestamp query string means the browser always treats them
-  // as a new URL and re-fetches, with no manual version bump needed.
+  // so after every deploy the browser can keep serving a stale app.js.
+  // Loading these two with a timestamp query string means the browser
+  // always treats them as a new URL and re-fetches, with no manual
+  // version bump needed.
   const v = Date.now();
   document.write(`<script src="config.js?v=${v}"><\/script>`);
   document.write(`<script src="app.js?v=${v}"><\/script>`);
