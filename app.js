@@ -32,10 +32,16 @@ const routes = {
     const path = window.location.pathname.replace(CFG.BASE_PATH, "").replace(/^\/|\/$/g, "");
     const parts = path.split("/").filter(Boolean);
     if (parts[0] === "dashboard") return { screen: "picker", panel: "dashboard" };
-    if (parts[0] === "my-tickets") return { screen: "picker", panel: "my-tickets" };
+    if (parts[0] === "my-tickets") {
+      // /my-tickets/ticket/:guildId/:ticketId — a specific ticket opened
+      // from the personal My Tickets list, distinct from the module's
+      // own /servers/:id/:module/ticket/:id (different entry point,
+      // same underlying detail page).
+      if (parts[1] === "ticket" && parts[2] && parts[3]) return { screen: "picker", panel: "my-tickets", myTicketGuildId: parts[2], myTicketId: parts[3] };
+      return { screen: "picker", panel: "my-tickets" };
+    }
     if (parts[0] === "premium") return { screen: "picker", panel: "premium" };
     if (parts[0] === "admin") return { screen: "picker", panel: "admin" };
-    if (parts[0] === "status") return { screen: "status" };
     if (parts[0] === "share" && parts[1]) return { screen: "share", shareId: parts[1] };
     if (parts[0] === "servers" && parts[1]) {
       const guildId = parts[1];
@@ -56,6 +62,9 @@ const routes = {
   },
   ticketUrl(guildId, moduleId, ticketId) {
     return `/servers/${guildId}/${moduleId}/ticket/${ticketId}`;
+  },
+  myTicketUrl(guildId, ticketId) {
+    return `/my-tickets/ticket/${guildId}/${ticketId}`;
   },
 };
 
@@ -321,7 +330,22 @@ function renderSidebarBottom(slotId) {
   const logoutBtn = slot.querySelector(".sb-logout-btn");
   const adminPanelBtn = slot.querySelector(".sb-admin-panel-btn");
 
-  statusLink.addEventListener("click", (e) => { e.preventDefault(); routes.go("/status"); enterStatusPage(); });
+  statusLink.addEventListener("click", async (e) => {
+    e.preventDefault();
+    // Status is a dashboard panel like any module (server context,
+    // full module list in the sidebar) rather than its own separate
+    // screen — if no server is currently open (e.g. clicked from the
+    // picker), fall back to the last server that was open, or the
+    // first server the bot is in, so there's always something to show.
+    if (!currentGuild?.id) {
+      await refreshHeroStatus();
+      const fallback = (botInfoCache?.guilds || [])[0];
+      if (!fallback) { await DCModal.alert("No servers to show status for yet — open a server's dashboard first.", { title: "No server selected" }); return; }
+      currentGuild = { id: fallback.id, name: fallback.name, icon: fallback.icon };
+    }
+    routes.go(routes.moduleUrl(currentGuild.id, "status"));
+    enterDashboard("status");
+  });
   themeToggle.addEventListener("click", (e) => {
     toggleTheme();
     e.currentTarget.classList.toggle("on");
@@ -370,13 +394,6 @@ async function maybeShowAdminPanelButton(slot) {
   if (adminEligibilityCache) btn.style.display = "flex";
 }
 
-async function enterStatusPage() {
-  showScreen("screen-status");
-  renderSidebarBottom("status-sidebar-bottom");
-  const root = document.getElementById("status-root");
-  root.innerHTML = loadingBlock("Loading status…");
-  await renderStatusModule(root);
-}
 applyTheme(localStorage.getItem(LS.theme) || "dark");
 
 // ============================================================
@@ -472,8 +489,7 @@ async function renderFromRoute() {
   if (route.screen !== "landing" && !session) { routes.go("/", true); showScreen("screen-landing"); return; }
 
   if (route.screen === "landing") { showScreen("screen-landing"); return; }
-  if (route.screen === "picker") { await enterPicker(route.panel); return; }
-  if (route.screen === "status") { await enterStatusPage(); return; }
+  if (route.screen === "picker") { await enterPicker(route.panel, { myTicketGuildId: route.myTicketGuildId, myTicketId: route.myTicketId }); return; }
   if (route.screen === "dashboard") {
     if (!currentGuild || currentGuild.id !== route.guildId) {
       currentGuild = { id: route.guildId, name: null, icon: null };
@@ -500,13 +516,18 @@ async function refreshHeroStatus() {
 // ============================================================
 let pickerActivePanel = "dashboard";
 
-async function enterPicker(panel) {
+async function enterPicker(panel, deepLink = {}) {
   showScreen("screen-picker");
   pickerActivePanel = panel || pickerActivePanel || "dashboard";
   renderSidebarBottom("picker-sidebar-bottom");
   await refreshHeroStatus();
   paintPickerNav();
-  await renderPickerPanel(pickerActivePanel);
+
+  if (pickerActivePanel === "my-tickets" && deepLink.myTicketGuildId && deepLink.myTicketId) {
+    await openMyTicketDetail(deepLink.myTicketGuildId, deepLink.myTicketId, false);
+  } else {
+    await renderPickerPanel(pickerActivePanel);
+  }
 
   document.querySelectorAll("#picker-sidebar [data-picker-panel]").forEach(el => {
     el.addEventListener("click", () => {
@@ -845,7 +866,8 @@ function wireAdminTicketSearch() {
 // columns toggle, and a detail page with an Author/Created/Subject/
 // Closed-By info panel plus claim/share-link controls.
 // ============================================================
-const MY_TICKETS_COLUMNS = ["server", "subject", "content", "status", "created"];
+const MY_TICKETS_COLUMNS = ["opener", "server", "subject", "content", "status", "created"];
+const MY_TICKETS_COLUMN_LABELS = { opener: "Opened by", server: "Server", subject: "Subject", content: "Content", status: "Status", created: "Created" };
 let myTicketsColumnPrefs = JSON.parse(localStorage.getItem("tk_mt_columns") || "null") || [...MY_TICKETS_COLUMNS];
 
 async function renderMyTicketsPanel(root) {
@@ -854,10 +876,10 @@ async function renderMyTicketsPanel(root) {
       <div><h1 class="picker-heading">My Tickets</h1><p class="picker-sub" id="my-tickets-count">Loading…</p></div>
       <div class="dropdown-anchor">
         <button class="btn btn-ghost btn-small" id="mt-columns-btn"><i class="ti ti-layout-columns"></i> Columns <i class="ti ti-chevron-down"></i></button>
-        <div class="dropdown-panel-floating" id="mt-columns-panel" style="display:none">
+        <div class="dropdown-panel-floating dropdown-panel-align-right" id="mt-columns-panel" style="display:none">
           <div class="dropdown-panel-title">Toggle columns</div>
           ${MY_TICKETS_COLUMNS.map(c => `
-            <label class="dc-checkbox-row"><input type="checkbox" data-mt-col="${c}" ${myTicketsColumnPrefs.includes(c) ? "checked" : ""}> ${c[0].toUpperCase()}${c.slice(1)}</label>`).join("")}
+            <label class="dc-checkbox-row"><input type="checkbox" data-mt-col="${c}" ${myTicketsColumnPrefs.includes(c) ? "checked" : ""} hidden><span class="dc-checkbox-box"><i class="ti ti-check"></i></span> ${MY_TICKETS_COLUMN_LABELS[c]}</label>`).join("")}
         </div>
       </div>
     </div>
@@ -1038,6 +1060,25 @@ function paintDateRangePicker(panel, onPick) {
   render();
 }
 
+// Shared "opened by" preview cell — avatar, display name, and the raw
+// Discord user id in small dim text underneath. Used by both My Tickets
+// and the Ticket Tool module's own staff-facing ticket list so the two
+// stay visually consistent.
+function openerPreviewHtml(t) {
+  const opener = t.opener;
+  const displayName = opener?.displayName || t.openedBy || "Unknown";
+  const userId = opener?.id || t.openedById || "";
+  const avatar = opener?.avatarUrl || "https://cdn.discordapp.com/embed/avatars/0.png";
+  return `
+    <span class="opener-preview">
+      <img class="opener-preview-avatar" src="${escapeHtml(avatar)}" alt="">
+      <span class="opener-preview-text">
+        <span class="opener-preview-name">${escapeHtml(displayName)}</span>
+        ${userId ? `<span class="opener-preview-id">${escapeHtml(userId)}</span>` : ""}
+      </span>
+    </span>`;
+}
+
 function paintMyTicketsList(rows, allTickets) {
   const list = document.getElementById("my-tickets-list");
   if (rows.length === 0) {
@@ -1045,10 +1086,11 @@ function paintMyTicketsList(rows, allTickets) {
     return;
   }
   const cols = myTicketsColumnPrefs;
-  const colWidths = { server: "1fr", subject: "1fr", content: "1.4fr", status: "100px", created: "120px" };
+  const colWidths = { opener: "1.3fr", server: "1fr", subject: "1fr", content: "1.4fr", status: "100px", created: "120px" };
   const gridTemplate = cols.map(c => colWidths[c]).join(" ");
-  const colLabel = { server: "Server", subject: "Subject", content: "Content", status: "Status", created: "Created" };
+  const colLabel = MY_TICKETS_COLUMN_LABELS;
   const cellHtml = {
+    opener: openerPreviewHtml,
     server: (t) => `<span style="display:flex;align-items:center;gap:8px">${t.guildIcon ? `<img src="https://cdn.discordapp.com/icons/${t.guildId}/${t.guildIcon}.png" style="width:20px;height:20px;border-radius:6px" alt="">` : `<span class="server-icon" style="width:20px;height:20px;font-size:9px;margin:0">${initials(t.guildName || "?")}</span>`} ${escapeHtml(t.guildName || "Unknown server")}</span>`,
     subject: (t) => `<span class="cc-trigger-chip" style="background:rgba(139,92,246,.14);color:var(--violet);border-color:rgba(139,92,246,.3)">${escapeHtml(t.subject || "No subject")}</span>`,
     content: (t) => escapeHtml((t.messages && t.messages[0]?.content) || "—").slice(0, 80),
@@ -1069,12 +1111,13 @@ function paintMyTicketsList(rows, allTickets) {
   }));
 }
 
-async function openMyTicketDetail(guildId, ticketId) {
+async function openMyTicketDetail(guildId, ticketId, updateUrl = true) {
+  if (updateUrl) routes.go(routes.myTicketUrl(guildId, ticketId));
   const root = document.getElementById("picker-panel-root");
   root.innerHTML = `
     <button class="btn btn-ghost btn-small" id="mt-back"><i class="ti ti-arrow-left"></i> Back to Tickets</button>
     <div id="mt-detail-body" style="margin-top:16px">${loadingBlock("Loading ticket…")}</div>`;
-  document.getElementById("mt-back").addEventListener("click", () => renderMyTicketsPanel(root));
+  document.getElementById("mt-back").addEventListener("click", () => { routes.go("/my-tickets"); renderMyTicketsPanel(root); });
   await paintTicketDetailBody(document.getElementById("mt-detail-body"), guildId, ticketId);
 }
 
@@ -1134,7 +1177,7 @@ async function paintTicketDetailBody(body, guildId, ticketId) {
 }
 
 function paintTicketShareControls(slot, guildId, ticketId, ticket) {
-  const shareUrl = ticket.shareId ? `${window.location.origin}${CFG.BASE_PATH.replace(/\/$/, "")}/share/${ticket.shareId}` : null;
+  const shareUrl = ticket.currentShareId ? `${window.location.origin}${CFG.BASE_PATH.replace(/\/$/, "")}/share/${ticket.currentShareId}` : null;
   slot.innerHTML = shareUrl
     ? `<div class="dc-share-link"><input type="text" readonly value="${escapeHtml(shareUrl)}" id="ticket-share-url"></div>
        <div class="field-row-inline" style="margin-top:8px">
@@ -1215,7 +1258,14 @@ async function enterSharePage(shareId) {
 // ============================================================
 // Dashboard shell
 // ============================================================
-const CORE_PANELS = [];
+// Status isn't a real module (it has no server-side .server.js, no
+// toggle, no Module_Data file) — it's core dashboard functionality, so
+// it lives in CORE_PANELS rather than window.DC.modules. It still
+// renders through the exact same switchPanel/buildSidebar machinery as
+// every module, which is what makes it show the same full sidebar
+// (server context, module list, profile/theme footer) instead of a
+// separate stripped-down screen.
+const CORE_PANELS = [{ id: "status", label: "Status", icon: "ti-activity" }];
 
 let modulesLoaded = false;
 let modulesLoadFailed = false;
@@ -1265,6 +1315,7 @@ function buildContext(extra = {}) {
     // Tickets and the deep-linked /ticket/:id route use, instead of
     // reimplementing its own transcript viewer.
     renderTicketDetail: (container, guildId, ticketId) => paintTicketDetailBody(container, guildId, ticketId),
+    openerPreviewHtml,
     navigateToTab: (tab) => { routes.go(routes.moduleUrl(currentGuild.id, currentPanelId, tab)); switchTab(tab); },
     navigateToTicket: (ticketId) => { routes.go(routes.ticketUrl(currentGuild.id, currentPanelId, ticketId)); switchToTicketView(ticketId); },
     ...extra,
@@ -1293,8 +1344,11 @@ function navItemHtml(id, icon, label, toggleable, isEnabled) {
 function buildSidebar(disabledModules) {
   disabledModules = disabledModules || [];
   const wrap = document.getElementById("dash-nav-items");
-  // Bot Status is intentionally never listed here — it only ever appears
-  // as the top-right status pip, never as a sidebar module tab.
+  // The custom-commands module's built-in "Bot Status" slash command is
+  // intentionally excluded here — it's a Discord slash command, not a
+  // dashboard page, and only ever appears in that module's own command
+  // list. This dashboard's own Status page is added via CORE_PANELS
+  // below instead, since it's not a toggleable module.
   const modules = (window.DC?.modules || []).filter(m => m.id !== "status");
 
   const modulesHtml = modules.length
@@ -1495,8 +1549,7 @@ async function renderStatusModule(root) {
     </div>`;
 
   wireStatusDayPopover(days, history.incidents);
-  if (currentGuild?.id) paintStatusModulesList();
-  else document.getElementById("status-modules-list").innerHTML = `<div class="empty-state">Open a server's dashboard first to manage its modules.</div>`;
+  paintStatusModulesList();
 }
 
 async function paintStatusModulesList() {
@@ -1576,7 +1629,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (window.location.pathname.includes("/servers/")) { routes.go("/dashboard"); enterPicker(); }
     else window.history.back();
   });
-  on("status-back-btn", "click", () => { window.history.back(); });
 
   boot();
   setInterval(async () => {
