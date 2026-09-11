@@ -120,7 +120,7 @@ html { scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; 
 .server-card-actions { display: flex; gap: 8px; }
 
 /* ---------- Dashboard shell (sidebar + module content) ---------- */
-.dash-body { display: grid; grid-template-columns: 252px 1fr; height: calc(100vh - 57px); }
+.dash-body { display: grid; grid-template-columns: 232px 1fr; height: calc(100vh - 57px); }
 .dash-nav { border-right: 1px solid var(--panel-border); padding: 18px 12px; background: var(--sidebar-bg); display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
 .dash-nav-server { display: flex; align-items: center; gap: 9px; padding: 8px 8px 14px; margin-bottom: 6px; border-bottom: 1px solid var(--panel-border); flex-shrink: 0; }
 .dash-nav-server .server-icon { width: 30px; height: 30px; font-size: 11px; margin-bottom: 0; border-radius: 8px; }
@@ -128,26 +128,43 @@ html { scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; 
 .dash-nav-server-sub { font-size: 10.5px; color: var(--text-dim); }
 
 .nav-section-label { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; color: var(--text-dim); padding: 14px 10px 6px; text-transform: uppercase; }
-/* Module nav rows: icon, then the label (left-aligned, given real room
-   instead of being squeezed by the toggle), then the toggle pinned to
-   the right. Previously the label used flex:1 with text-overflow, which
-   combined with a mis-named toggle class (.nav-item-toggle vs the CSS's
-   .nav-item-toggle-btn — the toggle never got its intended compact,
-   fade-in style) to visually crowd the label. */
-.nav-item { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 8px; font-size: 13px; font-weight: 500; color: var(--text-dim); margin-bottom: 1px; cursor: pointer; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; font-size: 13px; font-weight: 500; color: var(--text-dim); margin-bottom: 1px; cursor: pointer; }
 .nav-item i { font-size: 15px; width: 16px; flex-shrink: 0; }
-.nav-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-.nav-item .toggle.nav-item-toggle { flex-shrink: 0; }
+.nav-item-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The module on/off toggle only shows for whichever module is
+   currently open (.nav-item.active) — every other module in the list
+   shows just its label, matching "the toggle should only be visible
+   when inside the folder [module]". display:none (not opacity) so it
+   also can't be tabbed to or clicked while hidden. The old
+   .nav-item-toggle-btn name below never actually matched the markup's
+   .toggle.nav-item-toggle class — fixed to the real class name here. */
+.nav-item-toggle { display: none; width: 34px; flex-shrink: 0; }
+.nav-item.active .nav-item-toggle { display: inline-flex; }
 .nav-item:hover { background: var(--hover-bg); color: var(--text); }
 .nav-item.active { background: rgba(139,92,246,.14); color: var(--violet); font-weight: 600; }
-.nav-item.module-disabled .nav-item-label { opacity: .55; }
 
 .dash-main { padding: 26px 30px 60px; max-width: 1140px; overflow-y: auto; height: 100%; }
+
+/* Disabled-module overlay: the module underneath still renders and
+   works exactly like normal (toggling a module off is purely cosmetic
+   per the note in buildSidebar below) — this sits on top of it as a
+   translucent grey layer with a centered message, rather than hiding
+   the module's real content behind a plain empty box. pointer-events
+   is intentionally NOT disabled on the overlay itself (it should
+   visually read as "off"), but IS disabled on module-root underneath
+   while the overlay is showing, so a click can't reach through to a
+   module that's supposed to look turned off — see the .disabled-active
+   toggle applied in switchPanel. */
+#module-root-wrap { position: relative; min-height: 100%; }
+#module-root-wrap.disabled-active #module-root { pointer-events: none; user-select: none; }
+.module-disabled-overlay { position: absolute; inset: 0; background: rgba(10,10,16,.62); backdrop-filter: grayscale(1) blur(1px); display: flex; align-items: center; justify-content: center; border-radius: 12px; z-index: 5; }
+.module-disabled-overlay-text { display: flex; align-items: center; gap: 8px; background: var(--panel-solid); border: 1px solid var(--panel-border); padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 700; color: var(--text); box-shadow: 0 12px 30px -8px rgba(0,0,0,.5); }
+.module-disabled-overlay-text i { color: var(--text-dim); font-size: 15px; }
 
 /* Generic app shell used by the picker and status screens \u2014 same visual
    language as .dash-body/.dash-nav/.dash-main but without requiring a
    selected server (no server-icon header block). */
-.app-shell { display: grid; grid-template-columns: 252px 1fr; height: 100vh; }
+.app-shell { display: grid; grid-template-columns: 232px 1fr; height: 100vh; }
 .app-sidebar { border-right: 1px solid var(--panel-border); padding: 18px 12px; background: var(--sidebar-bg); display: flex; flex-direction: column; height: 100vh; overflow-y: auto; }
 .app-sidebar-brand { display: flex; align-items: center; gap: 9px; padding: 8px 8px 16px; margin-bottom: 6px; border-bottom: 1px solid var(--panel-border); flex-shrink: 0; }
 .app-sidebar-spacer { flex: 1; min-height: 12px; }
@@ -156,16 +173,17 @@ html { scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; 
 .nav-item.premium:hover { background: rgba(245,185,66,.1); color: #f5b942; }
 .nav-item.premium.active { background: rgba(245,185,66,.14); color: #f5b942; }
 
-/* Sidebar-bottom: Status link + dark-mode toggle share one row so they
-   sit on the same baseline (previously they were two separate rows and
-   could visually drift out of alignment), then the profile chip + menu. */
+/* Sidebar-bottom: Status link, theme switch, profile chip + popup menu */
 .sidebar-bottom { border-top: 1px solid var(--panel-border); padding-top: 10px; margin-top: 10px; position: relative; }
-.sidebar-status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 10px; }
-.sidebar-status-link { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--text-dim); }
-.sidebar-status-link:hover { color: var(--text); }
-.sidebar-status-link i { font-size: 14px; }
-.sidebar-theme-inline { display: flex; align-items: center; gap: 8px; }
-.sidebar-theme-inline i { font-size: 14px; color: var(--text-dim); }
+/* .sidebar-theme-row also carries .nav-item, so it inherits that class's
+   padding/font-size/color/layout and looks identical to the Status row
+   above it — this rule only adds what .nav-item doesn't already cover:
+   pushing the toggle to the far right and giving it room, since a plain
+   .nav-item has no third child to make space for. cursor:default (not
+   pointer) since, unlike Status, clicking the row itself does nothing —
+   only the toggle is interactive. */
+.sidebar-theme-row { justify-content: flex-start; cursor: default; }
+.sidebar-theme-row .toggle { margin-left: auto; }
 .sidebar-profile { display: flex; align-items: center; gap: 9px; padding: 8px; border-radius: 8px; cursor: pointer; margin-top: 4px; }
 .sidebar-profile:hover { background: var(--hover-bg); }
 .sidebar-profile-avatar { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; }
@@ -188,22 +206,17 @@ html { scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; 
 .status-daybar { display: flex; gap: 2px; height: 34px; }
 .status-day { flex: 1; border-radius: 2px; min-width: 2px; cursor: pointer; transition: opacity .1s; }
 .status-day:hover { opacity: .75; }
-/* Four-step severity scale (green -> yellow -> orange -> red) driven by
-   the worst incident's duration that day, rather than a flat two-color
-   split — see incidentSeverity() in bot.js for the duration thresholds. */
-.status-day-none { background: var(--green); }
+.status-day-ok { background: var(--green); }
 .status-day-minor { background: var(--amber); }
-.status-day-moderate { background: #fb923c; }
 .status-day-major { background: var(--red); }
+.status-day-future { background: var(--panel-border); opacity: .4; cursor: default; }
 .status-daybar-footer { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); margin-top: 8px; }
-.severity-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
-.severity-dot.severity-none { background: var(--green); }
-.severity-dot.severity-minor { background: var(--amber); }
-.severity-dot.severity-moderate { background: #fb923c; }
-.severity-dot.severity-major { background: var(--red); }
-.status-day-ok-row { display: flex; align-items: center; gap: 8px; color: var(--green); font-weight: 600; font-size: 13px; }
-.status-day-incident-row { display: flex; align-items: flex-start; gap: 4px; font-size: 13px; padding: 6px 0; }
-.status-day-incident-row:not(:last-child) { border-bottom: 1px solid var(--panel-border); margin-bottom: 4px; padding-bottom: 10px; }
+.status-day-tooltip { position: absolute; top: 58px; transform: translateX(-50%); background: var(--panel-solid); border: 1px solid var(--panel-border); border-radius: 10px; padding: 12px 14px; width: 220px; box-shadow: 0 12px 30px -8px rgba(0,0,0,.5); z-index: 50; pointer-events: none; }
+.status-day-tooltip-date { font-size: 12.5px; font-weight: 700; margin-bottom: 6px; }
+.status-day-tooltip-row { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; }
+.status-day-tooltip-row.ok { color: var(--green); }
+.status-day-tooltip-pct { font-size: 11.5px; color: var(--text-dim); margin-top: 2px; }
+.status-day-tooltip-note { font-size: 11.5px; color: var(--text-dim); margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--panel-border); font-style: italic; }
 .dash-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; gap: 14px; flex-wrap: wrap; }
 .dash-header h1 { font-family: var(--font-display); font-size: 21px; }
 .dash-header p { color: var(--text-dim); font-size: 13px; margin-top: 3px; }
@@ -222,7 +235,7 @@ html { scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; 
    text inside a clickable row can still show an I-beam cursor in some
    browsers, making it look like you're meant to type there. */
 .nav-item, .nav-section-label + .nav-item, .settings-nav-item, .tt-tab, .filter-chip,
-.sidebar-profile, .sidebar-theme-row, .kebab-menu-item, .status-day,
+.sidebar-profile, .kebab-menu-item, .status-day,
 .ticket-row-clickable, .config-row-label[data-clickable], .dc-dropdown-item,
 .dc-dropdown-trigger, .server-card, .perm-tristate-btn {
   cursor: pointer;
@@ -461,106 +474,3 @@ textarea.embed-inline-input.embed-card-desc { font-size: 13px; color: var(--text
 .tt-tab.active { color: var(--violet); border-bottom-color: var(--violet); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
-
-/* Admin panel: the password field is deliberately type="text" so it reads
-   as a second username-style box rather than a masked password input
-   (per the requested look) — no functional difference to the login call. */
-.admin-password-as-username { -webkit-text-security: none; }
-.sb-admin-panel-btn { display: flex; }
-
-/* ---------- Shared modal system (window.DC.modal) ----------
-   Every dialog anywhere in the app — confirm/alert/prompt or a fully
-   custom module editor body — renders through this. Deliberately fully
-   opaque (panel-solid, not the translucent .panel), since a see-through
-   editor over busy page content was explicitly called out as looking
-   bad; this is the only overlay component in the whole app. */
-#dc-modal-root:empty { display: none; }
-.dc-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; z-index: 500; padding: 24px; }
-.dc-modal-panel { background: var(--panel-solid); border: 1px solid var(--panel-border); border-radius: 14px; width: 100%; max-height: 88vh; overflow-y: auto; box-shadow: 0 30px 70px -20px rgba(0,0,0,.6); }
-.dc-modal-header { padding: 16px 20px; border-bottom: 1px solid var(--panel-border); }
-.dc-modal-header h3 { font-size: 15px; font-weight: 700; }
-.dc-modal-body { padding: 18px 20px; }
-.dc-modal-body p { font-size: 13.5px; color: var(--text); line-height: 1.5; }
-.dc-modal-footer { padding: 14px 20px; border-top: 1px solid var(--panel-border); display: flex; justify-content: flex-end; gap: 8px; }
-.dc-modal-input { width: 100%; }
-.btn-danger { background: rgba(233,69,96,.14); color: var(--red); border-color: rgba(233,69,96,.3); }
-.btn-danger:hover { border-color: var(--red); }
-
-/* ---------- Disabled-module screen ----------
-   Shown in place of a module's own content when it's turned off for
-   this server — a flat gray placeholder rather than stale/broken module
-   markup left on screen. */
-.module-disabled-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 90px 20px; color: var(--text-dim); background: var(--panel); border: 1px solid var(--panel-border); border-radius: 14px; filter: grayscale(1); opacity: .75; }
-.module-disabled-screen .glyph { font-size: 32px; margin-bottom: 14px; }
-.module-disabled-screen h3 { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 6px; filter: grayscale(0); opacity: 1; }
-.module-disabled-screen p { font-size: 13px; max-width: 38ch; }
-
-/* ---------- Ticket detail layout (info panel matches the reference:
-   Author / Created / Subject / Closed By, plus share-link controls) --- */
-.ticket-detail-layout { display: grid; grid-template-columns: 1fr 300px; gap: 20px; align-items: start; }
-.ticket-detail-main { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; padding: 18px 20px; min-width: 0; }
-.ticket-detail-sidebar { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; padding: 18px 20px; }
-.ticket-detail-sidebar h4 { font-size: 13.5px; font-weight: 700; margin-bottom: 14px; }
-.ticket-info-row { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--panel-border); }
-.ticket-info-row:first-of-type { border-top: none; padding-top: 0; }
-.ticket-info-row i { font-size: 15px; color: var(--text-dim); margin-top: 2px; flex-shrink: 0; }
-.ticket-info-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--text-dim); margin-bottom: 3px; }
-.ticket-info-val { font-size: 13px; font-weight: 600; }
-.ticket-share-block { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--panel-border); }
-.dc-share-link input { font-size: 12px; color: var(--text-dim); }
-@media (max-width: 900px) { .ticket-detail-layout { grid-template-columns: 1fr; } }
-
-/* ---------- Floating dropdowns (My Tickets filter row: Status / Server
-   / Subject / Date range) — button + positioned panel, styled to match
-   the reference screenshots instead of native <select> elements. ---- */
-.dropdown-anchor { position: relative; }
-.dropdown-panel-floating { position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; background: var(--panel-solid); border: 1px solid var(--panel-border); border-radius: 10px; box-shadow: 0 12px 30px -8px rgba(0,0,0,.5); min-width: 220px; max-height: 320px; overflow-y: auto; padding: 6px; }
-/* A dropdown whose trigger sits near the right edge of the page (e.g. the
-   "Columns" button in the My Tickets header) opens flush with the right
-   edge of its trigger instead of the left, so the panel never spills
-   off-screen and gets visually clipped. */
-.dropdown-panel-floating.dropdown-panel-align-right { left: auto; right: 0; }
-.dropdown-panel-title { font-size: 11px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: .03em; padding: 8px 9px 6px; }
-.dropdown-panel-search { width: 100%; border: none; border-bottom: 1px solid var(--panel-border); border-radius: 0; background: transparent; padding: 9px; margin-bottom: 4px; }
-.dropdown-panel-search:focus { outline: none; border-color: var(--panel-border); }
-.dropdown-panel-item { padding: 8px 9px; border-radius: 7px; font-size: 13px; cursor: pointer; }
-.dropdown-panel-item:hover { background: var(--hover-bg); }
-.dropdown-panel-item.selected { color: var(--violet); font-weight: 600; }
-.dropdown-panel-empty { padding: 14px; text-align: center; color: var(--text-dim); font-size: 12px; }
-
-/* Custom checkbox: the real <input> is visually hidden (still native,
-   still keyboard/screen-reader accessible, still fires change events) —
-   .dc-checkbox-box is the drawn box, filled in only when its sibling
-   input is :checked. Replaces the browser's default checkbox styling,
-   which looked out of place next to the rest of this dark, custom UI. */
-.dc-checkbox-row { display: flex; align-items: center; gap: 9px; padding: 8px 9px; font-size: 13px; cursor: pointer; border-radius: 7px; }
-.dc-checkbox-row:hover { background: var(--hover-bg); }
-.dc-checkbox-box { width: 16px; height: 16px; border-radius: 5px; border: 1.5px solid var(--panel-border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: transparent; background: var(--input-bg); }
-.dc-checkbox-box i { font-size: 12px; }
-.dc-checkbox-row input:checked ~ .dc-checkbox-box { background: var(--violet); border-color: var(--violet); color: #fff; }
-.dc-checkbox-row input:focus-visible ~ .dc-checkbox-box { outline: 2px solid var(--violet); outline-offset: 1px; }
-
-/* ---------- Date-range calendar popup ---------- */
-.dc-cal-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 4px; font-size: 12.5px; font-weight: 700; }
-.dc-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; padding: 4px; }
-.dc-cal-dow { text-align: center; font-size: 10px; color: var(--text-dim); font-weight: 700; padding: 4px 0; }
-.dc-cal-cell { display: flex; align-items: center; justify-content: center; aspect-ratio: 1; border-radius: 6px; font-size: 12px; cursor: pointer; }
-.dc-cal-cell:not(.dc-cal-empty):hover { background: var(--hover-bg); }
-.dc-cal-cell.selected { background: var(--violet); color: #fff; font-weight: 700; }
-.dc-cal-cell.in-range { background: rgba(139,92,246,.14); }
-.dc-cal-footer { display: flex; justify-content: space-between; padding: 8px 4px 4px; border-top: 1px solid var(--panel-border); margin-top: 4px; }
-
-/* ---------- Reused chip style for a ticket's subject badge ---------- */
-.cc-trigger-chip { display: inline-flex; align-items: center; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
-
-/* ---------- Ticket opener preview (avatar + display name / user id) —
-   used in both My Tickets and the Ticket Tool module's staff-facing
-   ticket list, so both show who opened a ticket the same way. ---- */
-.opener-preview { display: flex; align-items: center; gap: 9px; min-width: 0; }
-.opener-preview-avatar { width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; object-fit: cover; }
-.opener-preview-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
-.opener-preview-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.opener-preview-id { font-size: 10.5px; color: var(--text-dim); }
-
-/* ---------- Public share page ---------- */
-.share-page-wrap { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
