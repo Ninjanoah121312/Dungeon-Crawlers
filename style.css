@@ -175,16 +175,18 @@ html { scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; 
 .nav-item.premium:hover { background: rgba(245,185,66,.1); color: #f5b942; }
 .nav-item.premium.active { background: rgba(245,185,66,.14); color: #f5b942; }
 
-/* Sidebar-bottom: Status link + dark-mode toggle share one row so they
-   sit on the same baseline (previously they were two separate rows and
-   could visually drift out of alignment), then the profile chip + menu. */
+/* Sidebar-bottom: dark/light toggle sits above Status, each its own
+   row using the same .nav-item layout/padding/font so both look
+   identical — then the profile chip + menu below. */
 .sidebar-bottom { border-top: 1px solid var(--panel-border); padding-top: 10px; margin-top: 10px; position: relative; }
-.sidebar-status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 10px; }
-.sidebar-status-link { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--text-dim); }
-.sidebar-status-link:hover { color: var(--text); }
-.sidebar-status-link i { font-size: 14px; }
-.sidebar-theme-inline { display: flex; align-items: center; gap: 8px; }
-.sidebar-theme-inline i { font-size: 14px; color: var(--text-dim); }
+/* .sidebar-theme-row also carries .nav-item, so it inherits that
+   class's padding/font-size/color/layout and looks identical to the
+   Status row below it — this rule only adds what .nav-item doesn't
+   already cover: pushing the toggle to the far right. cursor:default
+   (not pointer) since, unlike Status, clicking the row itself does
+   nothing — only the toggle is interactive. */
+.sidebar-theme-row { justify-content: flex-start; cursor: default; }
+.sidebar-theme-row .toggle { margin-left: auto; }
 .sidebar-profile { display: flex; align-items: center; gap: 9px; padding: 8px; border-radius: 8px; cursor: pointer; margin-top: 4px; }
 .sidebar-profile:hover { background: var(--hover-bg); }
 .sidebar-profile-avatar { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; }
@@ -241,7 +243,7 @@ html { scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; 
    text inside a clickable row can still show an I-beam cursor in some
    browsers, making it look like you're meant to type there. */
 .nav-item, .nav-section-label + .nav-item, .settings-nav-item, .tt-tab, .filter-chip,
-.sidebar-profile, .sidebar-theme-row, .kebab-menu-item, .status-day,
+.sidebar-profile, .kebab-menu-item, .status-day,
 .ticket-row-clickable, .config-row-label[data-clickable], .dc-dropdown-item,
 .dc-dropdown-trigger, .server-card, .perm-tristate-btn {
   cursor: pointer;
