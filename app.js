@@ -286,10 +286,10 @@ function applyTheme(theme) {
 }
 function toggleTheme() { applyTheme(document.body.getAttribute("data-theme") === "dark" ? "light" : "dark"); }
 
-// Shared bottom-of-sidebar block: Status link + dark-mode toggle share a
-// single flex row (.sidebar-status-row) so they're always aligned on the
-// same baseline, plus the logged-in user's profile chip with its
-// Profile/Admin Panel/Log out menu.
+// Shared bottom-of-sidebar block: the dark/light toggle sits above
+// Status (both styled as identical rows via .nav-item), then the
+// logged-in user's profile chip with its Profile/Admin Panel/Log out
+// menu.
 function renderSidebarBottom(slotId) {
   const slot = document.getElementById(slotId);
   if (!slot) return;
@@ -297,13 +297,11 @@ function renderSidebarBottom(slotId) {
   const isDark = document.body.getAttribute("data-theme") !== "light";
   slot.innerHTML = `
     <div class="sidebar-bottom">
-      <div class="sidebar-status-row">
-        <a href="#" class="sidebar-status-link sb-status-link"><i class="ti ti-activity"></i> Status</a>
-        <div class="sidebar-theme-inline">
-          <i class="ti ${isDark ? "ti-moon" : "ti-sun"}"></i>
-          <button class="toggle sb-theme-toggle ${isDark ? "on" : ""}" aria-label="Toggle theme"></button>
-        </div>
+      <div class="nav-item sidebar-theme-row">
+        <i class="ti ${isDark ? "ti-moon" : "ti-sun"}"></i> <span class="sidebar-theme-label">${isDark ? "Dark" : "Light"} mode</span>
+        <button class="toggle sb-theme-toggle ${isDark ? "on" : ""}" aria-label="Toggle theme"></button>
       </div>
+      <a href="#" class="nav-item sb-status-link"><i class="ti ti-activity"></i> Status</a>
       <div class="sidebar-profile sb-profile-trigger">
         <img class="sidebar-profile-avatar" src="${avatarUrl(session.user)}" alt="">
         <div class="sidebar-profile-name">${escapeHtml(session.user.username)}</div>
@@ -350,7 +348,9 @@ function renderSidebarBottom(slotId) {
     toggleTheme();
     e.currentTarget.classList.toggle("on");
     const isDarkNow = document.body.getAttribute("data-theme") !== "light";
-    slot.querySelector(".sidebar-theme-inline i").className = `ti ${isDarkNow ? "ti-moon" : "ti-sun"}`;
+    const row = slot.querySelector(".sidebar-theme-row");
+    row.querySelector("i").className = `ti ${isDarkNow ? "ti-moon" : "ti-sun"}`;
+    row.querySelector(".sidebar-theme-label").textContent = `${isDarkNow ? "Dark" : "Light"} mode`;
   });
   function closeMenuOnOutsideClick(e) {
     if (!menu.contains(e.target) && !trigger.contains(e.target)) {
