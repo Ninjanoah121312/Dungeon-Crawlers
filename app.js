@@ -2,9 +2,16 @@
 // Dungeon Crawlers — frontend app logic
 // Static site (GitHub Pages) talking to:
 //   1) Discord's OAuth + REST API directly (PKCE, no secret needed here)
-//   2) Your locally hosted bot (bot/bot.js) over http://localhost:3001
-// Includes a tiny client-side router so URLs reflect the current
-// screen (/, /dashboard, /servers/:id/:panel).
+//   2) Your own hosted bot (bot/bot.js) over CFG.LOCAL_BOT_URL
+//
+// URL shape (extended router):
+//   /                                        landing
+//   /dashboard | /my-tickets | /premium      picker screens
+//   /status                                  status page
+//   /servers/:guildId/:moduleId              a module's default tab
+//   /servers/:guildId/:moduleId/:tab         a module's named sub-tab
+//   /servers/:guildId/:moduleId/ticket/:id   a ticket detail page
+//   /share/:shareId                          public read-only ticket view
 // ============================================================
 
 const CFG = window.TICKET_KEEPER_CONFIG;
@@ -25,11 +32,24 @@ const routes = {
     const path = window.location.pathname.replace(CFG.BASE_PATH, "").replace(/^\/|\/$/g, "");
     const parts = path.split("/").filter(Boolean);
     if (parts[0] === "dashboard") return { screen: "picker", panel: "dashboard" };
-    if (parts[0] === "my-tickets") return { screen: "picker", panel: "my-tickets" };
+    if (parts[0] === "my-tickets") {
+      // /my-tickets/ticket/:guildId/:ticketId — a specific ticket opened
+      // from the personal My Tickets list, distinct from the module's
+      // own /servers/:id/:module/ticket/:id (different entry point,
+      // same underlying detail page).
+      if (parts[1] === "ticket" && parts[2] && parts[3]) return { screen: "picker", panel: "my-tickets", myTicketGuildId: parts[2], myTicketId: parts[3] };
+      return { screen: "picker", panel: "my-tickets" };
+    }
     if (parts[0] === "premium") return { screen: "picker", panel: "premium" };
     if (parts[0] === "admin") return { screen: "picker", panel: "admin" };
-    if (parts[0] === "status") return { screen: "status" };
-    if (parts[0] === "servers" && parts[1]) return { screen: "dashboard", guildId: parts[1], panel: parts[2] || "ticket-tool" };
+    if (parts[0] === "share" && parts[1]) return { screen: "share", shareId: parts[1] };
+    if (parts[0] === "servers" && parts[1]) {
+      const guildId = parts[1];
+      const moduleId = parts[2] || "ticket-tool";
+      if (parts[3] === "ticket" && parts[4]) return { screen: "dashboard", guildId, panel: moduleId, ticketId: parts[4] };
+      const tab = parts[3] || null;
+      return { screen: "dashboard", guildId, panel: moduleId, tab };
+    }
     return { screen: "landing" };
   },
   go(url, replace = false) {
@@ -37,9 +57,113 @@ const routes = {
     if (replace) window.history.replaceState({}, "", full);
     else window.history.pushState({}, "", full);
   },
+  moduleUrl(guildId, moduleId, tab) {
+    return `/servers/${guildId}/${moduleId}${tab ? `/${tab}` : ""}`;
+  },
+  ticketUrl(guildId, moduleId, ticketId) {
+    return `/servers/${guildId}/${moduleId}/ticket/${ticketId}`;
+  },
+  myTicketUrl(guildId, ticketId) {
+    return `/my-tickets/ticket/${guildId}/${ticketId}`;
+  },
 };
 
 window.addEventListener("popstate", () => renderFromRoute());
+
+// ============================================================
+// Shared modal system — every dialog in the app (confirm, alert, or a
+// fully custom body) renders through this, so nothing anywhere uses the
+// browser's native confirm()/alert() or a one-off overlay div.
+// ============================================================
+function escapeHtml(s) { return (s || "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
+
+const DCModal = (() => {
+  const root = () => document.getElementById("dc-modal-root");
+
+  function close() {
+    const r = root();
+    r.innerHTML = "";
+    r.classList.remove("dc-modal-open");
+    document.removeEventListener("keydown", onEscape);
+  }
+  function onEscape(e) { if (e.key === "Escape") close(); }
+
+  function open(bodyHtml, { maxWidth = "440px", onMount } = {}) {
+    const r = root();
+    r.classList.add("dc-modal-open");
+    r.innerHTML = `
+      <div class="dc-modal-overlay">
+        <div class="dc-modal-panel" style="max-width:${maxWidth}">${bodyHtml}</div>
+      </div>`;
+    r.querySelector(".dc-modal-overlay").addEventListener("click", (e) => { if (e.target.classList.contains("dc-modal-overlay")) close(); });
+    document.addEventListener("keydown", onEscape);
+    if (onMount) onMount(r);
+    return r;
+  }
+
+  function confirm(message, opts = {}) {
+    return new Promise((resolve) => {
+      const { title = "Are you sure?", confirmLabel = "Confirm", cancelLabel = "Cancel", danger = false } = opts;
+      open(`
+        <div class="dc-modal-header"><h3>${escapeHtml(title)}</h3></div>
+        <div class="dc-modal-body"><p>${escapeHtml(message)}</p></div>
+        <div class="dc-modal-footer">
+          <button class="btn btn-ghost btn-small" id="dc-modal-cancel">${escapeHtml(cancelLabel)}</button>
+          <button class="btn ${danger ? "btn-danger" : "btn-primary"} btn-small" id="dc-modal-confirm">${escapeHtml(confirmLabel)}</button>
+        </div>`, {
+        onMount: (r) => {
+          r.querySelector("#dc-modal-cancel").addEventListener("click", () => { close(); resolve(false); });
+          r.querySelector("#dc-modal-confirm").addEventListener("click", () => { close(); resolve(true); });
+        },
+      });
+    });
+  }
+
+  function alertModal(message, opts = {}) {
+    return new Promise((resolve) => {
+      const { title = "Notice", okLabel = "OK" } = opts;
+      open(`
+        <div class="dc-modal-header"><h3>${escapeHtml(title)}</h3></div>
+        <div class="dc-modal-body"><p>${escapeHtml(message)}</p></div>
+        <div class="dc-modal-footer">
+          <button class="btn btn-primary btn-small" id="dc-modal-ok">${escapeHtml(okLabel)}</button>
+        </div>`, {
+        onMount: (r) => r.querySelector("#dc-modal-ok").addEventListener("click", () => { close(); resolve(); }),
+      });
+    });
+  }
+
+  function promptModal(message, opts = {}) {
+    return new Promise((resolve) => {
+      const { title = "Enter a value", placeholder = "", defaultValue = "", confirmLabel = "Save" } = opts;
+      open(`
+        <div class="dc-modal-header"><h3>${escapeHtml(title)}</h3></div>
+        <div class="dc-modal-body">
+          <p style="margin-bottom:10px">${escapeHtml(message)}</p>
+          <input type="text" class="dc-modal-input" id="dc-modal-prompt-input" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(defaultValue)}">
+        </div>
+        <div class="dc-modal-footer">
+          <button class="btn btn-ghost btn-small" id="dc-modal-cancel">Cancel</button>
+          <button class="btn btn-primary btn-small" id="dc-modal-confirm">${escapeHtml(confirmLabel)}</button>
+        </div>`, {
+        onMount: (r) => {
+          const input = r.querySelector("#dc-modal-prompt-input");
+          input.focus();
+          input.select();
+          input.addEventListener("keydown", (e) => { if (e.key === "Enter") { close(); resolve(input.value); } });
+          r.querySelector("#dc-modal-cancel").addEventListener("click", () => { close(); resolve(null); });
+          r.querySelector("#dc-modal-confirm").addEventListener("click", () => { close(); resolve(input.value); });
+        },
+      });
+    });
+  }
+
+  function custom(bodyHtml, opts = {}) {
+    return open(bodyHtml, opts);
+  }
+
+  return { confirm, alert: alertModal, prompt: promptModal, custom, close };
+})();
 
 // ============================================================
 // PKCE helpers
@@ -83,7 +207,7 @@ async function exchangeCodeForToken(code) {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code, verifier, redirect_uri: CFG.REDIRECT_URI }),
     });
-    if (!res2.ok) throw new Error("Could not complete login. Is your local bot running?");
+    if (!res2.ok) throw new Error("Could not complete login. Is your bot running?");
     return await res2.json();
   }
 }
@@ -119,27 +243,18 @@ function isAdmin(guild) {
 }
 
 // ============================================================
-// Local bot bridge
+// Bot bridge
 // ============================================================
 async function pingLocalBot() {
-  // Quick tunnels (trycloudflare.com) add real latency, especially right
-  // after they spin up — 2.5s was too tight and made a perfectly-online
-  // bot look down. Try /status first (this is the real check — it's the
-  // endpoint that returns bot info); if that fails, fall back to a bare
-  // root request purely to tell "bot unreachable" apart from "bot is up
-  // but /status itself errored", which is a more useful failure signal.
   try {
     const res = await fetch(`${CFG.LOCAL_BOT_URL}/status`, { signal: AbortSignal.timeout(8000) });
     if (res.ok) return await res.json();
   } catch { /* fall through to root check below */ }
-
   try {
     await fetch(`${CFG.LOCAL_BOT_URL}/`, { signal: AbortSignal.timeout(8000) });
-    // Root responds (even a 404 means the server answered) but /status
-    // didn't — the tunnel/bot process is reachable, just not healthy.
     return null;
   } catch {
-    return null; // truly unreachable: tunnel down, bot down, or DNS/CORS issue
+    return null;
   }
 }
 async function api(path, options = {}) {
@@ -171,10 +286,10 @@ function applyTheme(theme) {
 }
 function toggleTheme() { applyTheme(document.body.getAttribute("data-theme") === "dark" ? "light" : "dark"); }
 
-// Shared bottom-of-sidebar block used by both the picker screen and the
-// per-server dashboard: a Status link, a light/dark switch, and the
-// logged-in user's profile chip which opens a small Profile/Log out menu
-// on click (matches the reference screenshot's popup).
+// Shared bottom-of-sidebar block: Status link + dark-mode toggle share a
+// single flex row (.sidebar-status-row) so they're always aligned on the
+// same baseline, plus the logged-in user's profile chip with its
+// Profile/Admin Panel/Log out menu.
 function renderSidebarBottom(slotId) {
   const slot = document.getElementById(slotId);
   if (!slot) return;
@@ -182,10 +297,12 @@ function renderSidebarBottom(slotId) {
   const isDark = document.body.getAttribute("data-theme") !== "light";
   slot.innerHTML = `
     <div class="sidebar-bottom">
-      <a href="#" class="nav-item sb-status-link"><i class="ti ti-activity"></i> Status</a>
-      <div class="nav-item sidebar-theme-row">
-        <i class="ti ${isDark ? "ti-moon" : "ti-sun"}"></i> <span class="sidebar-theme-label">${isDark ? "Dark" : "Light"} mode</span>
-        <button class="toggle sb-theme-toggle ${isDark ? "on" : ""}" aria-label="Toggle theme"></button>
+      <div class="sidebar-status-row">
+        <a href="#" class="sidebar-status-link sb-status-link"><i class="ti ti-activity"></i> Status</a>
+        <div class="sidebar-theme-inline">
+          <i class="ti ${isDark ? "ti-moon" : "ti-sun"}"></i>
+          <button class="toggle sb-theme-toggle ${isDark ? "on" : ""}" aria-label="Toggle theme"></button>
+        </div>
       </div>
       <div class="sidebar-profile sb-profile-trigger">
         <img class="sidebar-profile-avatar" src="${avatarUrl(session.user)}" alt="">
@@ -198,33 +315,42 @@ function renderSidebarBottom(slotId) {
           <div><div class="sidebar-profile-name">${escapeHtml(session.user.username)}</div><div class="field-hint" style="margin-top:1px">@${escapeHtml(session.user.username)}</div></div>
         </div>
         <button class="kebab-menu-item sb-profile-btn"><i class="ti ti-user-circle"></i> Profile</button>
+        <button class="kebab-menu-item sb-admin-panel-btn" style="display:none"><i class="ti ti-shield-lock"></i> Admin Panel</button>
         <button class="kebab-menu-item danger sb-logout-btn"><i class="ti ti-logout"></i> Log out</button>
       </div>
     </div>`;
 
-  // Every query below is scoped to `slot`, not the whole document — three
-  // screens (picker/dashboard/status) each have their own sidebar-bottom
-  // container present in the DOM at the same time (only one is ever
-  // visible via the .active class), so a global getElementById/querySelector
-  // here would always resolve to whichever screen's copy rendered first
-  // and silently wire up listeners on the wrong, invisible one. That was
-  // the actual cause of "the Status link / theme toggle / profile menu
-  // don't react" — the visible screen's buttons had no listeners at all.
+  maybeShowAdminPanelButton(slot);
+
   const statusLink = slot.querySelector(".sb-status-link");
   const themeToggle = slot.querySelector(".sb-theme-toggle");
   const menu = slot.querySelector(".sb-profile-menu");
   const trigger = slot.querySelector(".sb-profile-trigger");
   const profileBtn = slot.querySelector(".sb-profile-btn");
   const logoutBtn = slot.querySelector(".sb-logout-btn");
+  const adminPanelBtn = slot.querySelector(".sb-admin-panel-btn");
 
-  statusLink.addEventListener("click", (e) => { e.preventDefault(); enterStatusPage(); });
+  statusLink.addEventListener("click", async (e) => {
+    e.preventDefault();
+    // Status is a dashboard panel like any module (server context,
+    // full module list in the sidebar) rather than its own separate
+    // screen — if no server is currently open (e.g. clicked from the
+    // picker), fall back to the last server that was open, or the
+    // first server the bot is in, so there's always something to show.
+    if (!currentGuild?.id) {
+      await refreshHeroStatus();
+      const fallback = (botInfoCache?.guilds || [])[0];
+      if (!fallback) { await DCModal.alert("No servers to show status for yet — open a server's dashboard first.", { title: "No server selected" }); return; }
+      currentGuild = { id: fallback.id, name: fallback.name, icon: fallback.icon };
+    }
+    routes.go(routes.moduleUrl(currentGuild.id, "status"));
+    enterDashboard("status");
+  });
   themeToggle.addEventListener("click", (e) => {
     toggleTheme();
     e.currentTarget.classList.toggle("on");
     const isDarkNow = document.body.getAttribute("data-theme") !== "light";
-    const row = slot.querySelector(".sidebar-theme-row");
-    row.querySelector("i").className = `ti ${isDarkNow ? "ti-moon" : "ti-sun"}`;
-    row.querySelector(".sidebar-theme-label").textContent = `${isDarkNow ? "Dark" : "Light"} mode`;
+    slot.querySelector(".sidebar-theme-inline i").className = `ti ${isDarkNow ? "ti-moon" : "ti-sun"}`;
   });
   function closeMenuOnOutsideClick(e) {
     if (!menu.contains(e.target) && !trigger.contains(e.target)) {
@@ -240,31 +366,40 @@ function renderSidebarBottom(slotId) {
       document.removeEventListener("click", closeMenuOnOutsideClick, true);
     } else {
       menu.style.display = "block";
-      // Attached only now, and only for this open menu instance — never
-      // fires on a click that happened before the menu was actually open,
-      // which was previously eating the first click on anything else in
-      // the sidebar (theme toggle, Status link) instead of the menu.
       document.addEventListener("click", closeMenuOnOutsideClick, true);
     }
   });
   logoutBtn.addEventListener("click", () => { clearSession(); routes.go("/", true); showScreen("screen-landing"); });
   profileBtn.addEventListener("click", () => { menu.style.display = "none"; /* no dedicated profile page yet */ });
+  adminPanelBtn.addEventListener("click", () => {
+    menu.style.display = "none";
+    pickerActivePanel = "admin";
+    routes.go("/admin");
+    enterPicker("admin");
+  });
 }
 
-async function enterStatusPage() {
-  showScreen("screen-status");
-  renderSidebarBottom("status-sidebar-bottom");
-  const root = document.getElementById("status-root");
-  root.innerHTML = loadingBlock("Loading status…");
-  await renderStatusModule(root);
+let adminEligibilityCache = null;
+async function maybeShowAdminPanelButton(slot) {
+  const btn = slot.querySelector(".sb-admin-panel-btn");
+  if (!btn) return;
+  const session = getSession();
+  if (!session?.user?.id) return;
+  if (adminEligibilityCache === null) {
+    try {
+      const result = await api(`/admin/eligibility?discordUserId=${session.user.id}`);
+      adminEligibilityCache = Boolean(result.eligible);
+    } catch { adminEligibilityCache = false; }
+  }
+  if (adminEligibilityCache) btn.style.display = "flex";
 }
+
 applyTheme(localStorage.getItem(LS.theme) || "dark");
 
 // ============================================================
 // Small render helpers
 // ============================================================
 function showScreen(id) { document.querySelectorAll(".screen").forEach(s => s.classList.remove("active")); document.getElementById(id).classList.add("active"); }
-function escapeHtml(s) { return (s || "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
 function initials(name) { return (name || "?").slice(0, 2).toUpperCase(); }
 function avatarUrl(user) {
   return user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=64`
@@ -286,6 +421,21 @@ function renderStatusPip(el, botInfo) {
   if (botInfo && botInfo.online) { el.classList.add("online"); el.innerHTML = `<span class="status-dot"></span>Bot online`; }
   else { el.classList.add("offline"); el.innerHTML = `<span class="status-dot"></span>Bot Servers down`; }
 }
+function timeAgoGlobal(iso) {
+  if (!iso) return "—";
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
+  const years = Math.floor(months / 12);
+  return `${years} year${years === 1 ? "" : "s"} ago`;
+}
 
 // ============================================================
 // Global state
@@ -298,7 +448,6 @@ let currentGuildDisabledModules = [];
 // Boot + top-level routing
 // ============================================================
 async function boot() {
-  // If 404.html bounced a deep link here, restore the real path first
   const redirectPath = sessionStorage.getItem("tk_redirect_path");
   if (redirectPath) {
     sessionStorage.removeItem("tk_redirect_path");
@@ -307,6 +456,10 @@ async function boot() {
 
   const url = new URL(window.location.href);
   const code = url.searchParams.get("code");
+
+  const route = routes.parse();
+  if (route.screen === "share") { await enterSharePage(route.shareId); return; }
+
   refreshHeroStatus();
 
   if (code) {
@@ -319,7 +472,7 @@ async function boot() {
       routes.go(sessionStorage.getItem("tk_post_login_redirect") || "/dashboard", true);
       renderFromRoute();
     } catch (e) {
-      alert(e.message || "Login failed");
+      await DCModal.alert(e.message || "Login failed", { title: "Login failed" });
       routes.go("/", true);
       showScreen("screen-landing");
     }
@@ -332,16 +485,16 @@ async function renderFromRoute() {
   const route = routes.parse();
   const session = getSession();
 
+  if (route.screen === "share") { await enterSharePage(route.shareId); return; }
   if (route.screen !== "landing" && !session) { routes.go("/", true); showScreen("screen-landing"); return; }
 
   if (route.screen === "landing") { showScreen("screen-landing"); return; }
-  if (route.screen === "picker") { await enterPicker(route.panel); return; }
-  if (route.screen === "status") { await enterStatusPage(); return; }
+  if (route.screen === "picker") { await enterPicker(route.panel, { myTicketGuildId: route.myTicketGuildId, myTicketId: route.myTicketId }); return; }
   if (route.screen === "dashboard") {
     if (!currentGuild || currentGuild.id !== route.guildId) {
       currentGuild = { id: route.guildId, name: null, icon: null };
     }
-    await enterDashboard(route.panel || "ticket-tool");
+    await enterDashboard(route.panel || "ticket-tool", { tab: route.tab, ticketId: route.ticketId });
   }
 }
 
@@ -363,13 +516,18 @@ async function refreshHeroStatus() {
 // ============================================================
 let pickerActivePanel = "dashboard";
 
-async function enterPicker(panel) {
+async function enterPicker(panel, deepLink = {}) {
   showScreen("screen-picker");
   pickerActivePanel = panel || pickerActivePanel || "dashboard";
   renderSidebarBottom("picker-sidebar-bottom");
   await refreshHeroStatus();
   paintPickerNav();
-  await renderPickerPanel(pickerActivePanel);
+
+  if (pickerActivePanel === "my-tickets" && deepLink.myTicketGuildId && deepLink.myTicketId) {
+    await openMyTicketDetail(deepLink.myTicketGuildId, deepLink.myTicketId, false);
+  } else {
+    await renderPickerPanel(pickerActivePanel);
+  }
 
   document.querySelectorAll("#picker-sidebar [data-picker-panel]").forEach(el => {
     el.addEventListener("click", () => {
@@ -411,7 +569,6 @@ async function renderDashboardPanel(root) {
       return;
     }
     const botGuildIds = new Set((botInfoCache?.guilds || []).map(g => g.id));
-    // bot-joined servers first, alphabetical within each group
     const sorted = [...admin].sort((a, b) => {
       const aHas = botGuildIds.has(a.id), bHas = botGuildIds.has(b.id);
       if (aHas !== bHas) return aHas ? -1 : 1;
@@ -436,7 +593,7 @@ async function renderDashboardPanel(root) {
     grid.querySelectorAll("[data-open-dash]").forEach(btn => {
       btn.addEventListener("click", () => {
         currentGuild = { id: btn.dataset.openDash, name: btn.dataset.name, icon: btn.dataset.icon };
-        routes.go(`/servers/${currentGuild.id}/ticket-tool`);
+        routes.go(routes.moduleUrl(currentGuild.id, "ticket-tool"));
         enterDashboard("ticket-tool");
       });
     });
@@ -453,9 +610,7 @@ function renderPremiumPanel(root) {
 }
 
 // ============================================================
-// Admin panel — separate auth layer (username/password against .env,
-// gated further by Discord user id) for controlling which guilds are
-// allowed to use the tool and who else can manage that.
+// Admin panel
 // ============================================================
 const ADMIN_TOKEN_KEY = "tk_admin_token";
 function getAdminToken() { return localStorage.getItem(ADMIN_TOKEN_KEY); }
@@ -496,8 +651,8 @@ function paintAdminLogin(root) {
     <h1 class="picker-heading">Admin Panel</h1>
     <p class="picker-sub">Sign in with the shared admin credentials. Your Discord account also needs to be granted access.</p>
     <div class="config-section" style="max-width:380px">
-      <div class="field"><label>Username</label><input type="text" id="admin-username" autocomplete="username"></div>
-      <div class="field"><label>Password</label><input type="password" id="admin-password" autocomplete="current-password"></div>
+      <div class="field"><label>Username</label><input type="text" id="admin-username" autocomplete="username" placeholder="Username"></div>
+      <div class="field"><label>Password</label><input type="text" id="admin-password" autocomplete="username" placeholder="Password" class="admin-password-as-username"></div>
       <div class="field-hint" id="admin-login-error" style="color:var(--red);display:none"></div>
       <button class="btn btn-primary btn-small" id="admin-login-btn" style="margin-top:6px">Log in</button>
     </div>`;
@@ -525,18 +680,29 @@ async function paintAdminDashboard(root, session) {
       <button class="btn btn-ghost btn-small" id="admin-logout-btn"><i class="ti ti-logout"></i> Log out</button>
     </div>
     <div class="config-section">
-      <h3>Allowed servers</h3>
-      <div class="hint">Only servers in this list can use the ticket tool. Leave empty to allow every server the bot is in (default, until you add the first one).</div>
-      <div id="admin-guilds-list">${loadingBlock()}</div>
+      <h3>Server access</h3>
+      <div class="hint">Choose whether every server the bot is in may use it, or only servers you explicitly allow.</div>
+      <div class="config-row" style="margin-bottom:4px">
+        <span class="config-row-label">Restrict to an allow-list</span>
+        <button class="toggle" id="admin-allowmode-toggle" aria-label="Toggle allow-list mode"></button>
+      </div>
+      <div id="admin-guilds-section"></div>
+    </div>
+    <div class="config-section" style="margin-top:18px">
+      <h3>Ticket search</h3>
+      <div class="hint">Find any ticket across every server by its number, subject, or who opened/claimed/closed it.</div>
+      <input type="text" class="search-input" id="admin-ticket-search" placeholder="Search by ticket number, subject, or user…" style="width:100%;margin-bottom:10px">
+      <div id="admin-ticket-search-results"></div>
     </div>
     ${session.isOwner ? `
     <div class="config-section" style="margin-top:18px">
       <h3>Granted admins</h3>
-      <div class="hint">Discord user ids that can log into this panel, in addition to you as the owner.</div>
+      <div class="hint">Discord user ids that can log into this panel, in addition to you as the owner. Numbers only.</div>
       <div class="field-row-inline" style="margin-bottom:10px">
-        <input type="text" id="admin-add-userid" placeholder="Discord user id" style="flex:1">
+        <input type="text" id="admin-add-userid" placeholder="Discord user id (numbers only)" inputmode="numeric" style="flex:1">
         <button class="btn btn-primary btn-small" id="admin-add-btn">Grant access</button>
       </div>
+      <div class="field-hint" id="admin-add-error" style="display:none;color:var(--red);margin-bottom:8px"></div>
       <div id="admin-admins-list">${loadingBlock()}</div>
     </div>` : ""}`;
 
@@ -546,81 +712,206 @@ async function paintAdminDashboard(root, session) {
     renderAdminPanel(root);
   });
 
-  await paintAdminGuildsList();
+  await paintAdminGuildsSection();
+  wireAdminTicketSearch();
   if (session.isOwner) await paintAdminAdminsList();
 }
 
-async function paintAdminGuildsList() {
-  const slot = document.getElementById("admin-guilds-list");
+async function paintAdminGuildsSection() {
+  const section = document.getElementById("admin-guilds-section");
+  const toggle = document.getElementById("admin-allowmode-toggle");
   try {
-    const guildsResult = await adminApi("/admin/guilds");
-    const allowedGuildIds = guildsResult.allowedGuildIds;
-    const knownGuilds = guildsResult.knownGuilds;
-    if (knownGuilds.length === 0) { slot.innerHTML = `<div class="empty-state">The bot isn't in any servers yet.</div>`; return; }
-    slot.innerHTML = knownGuilds.map(g => `
-      <div class="config-row">
-        <span class="config-row-label" style="display:flex;align-items:center;gap:8px">
-          ${g.icon ? `<img src="https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png" style="width:22px;height:22px;border-radius:6px" alt="">` : `<span class="server-icon" style="width:22px;height:22px;font-size:9px;margin:0">${initials(g.name)}</span>`}
-          ${escapeHtml(g.name)}
-        </span>
-        <button class="toggle ${allowedGuildIds.length === 0 || allowedGuildIds.includes(g.id) ? "on" : ""}" data-guild-toggle="${g.id}" aria-label="Toggle ${g.name}"></button>
-      </div>`).join("");
-    slot.querySelectorAll("[data-guild-toggle]").forEach(btn => btn.addEventListener("click", async () => {
-      const guildId = btn.dataset.guildToggle;
-      const isAllowing = !btn.classList.contains("on");
-      try {
-        if (isAllowing) await adminApi("/admin/guilds", { method: "POST", body: JSON.stringify({ guildId }) });
-        else await adminApi(`/admin/guilds/${guildId}`, { method: "DELETE" });
-        await paintAdminGuildsList();
-      } catch (e) { alert(`Couldn't update: ${e.message}`); }
-    }));
+    const result = await adminApi("/admin/guilds");
+    const isAllowlist = result.allowMode === "allowlist";
+    toggle.classList.toggle("on", isAllowlist);
+
+    if (!isAllowlist) {
+      section.innerHTML = `<div class="field-hint" style="margin-top:10px"><i class="ti ti-info-circle"></i> Every server the bot is in may currently use it. Turn the toggle on to restrict access to specific servers.</div>`;
+    } else {
+      section.innerHTML = `
+        <div style="margin-top:10px">
+          <div class="field-row-inline" style="margin-bottom:10px">
+            <input type="text" id="admin-add-guildid" placeholder="Server id (numbers only)" inputmode="numeric" style="flex:1">
+            <button class="btn btn-primary btn-small" id="admin-add-guild-btn">Grant server</button>
+          </div>
+          <div class="field-hint" id="admin-add-guild-error" style="display:none;color:var(--red);margin-bottom:8px"></div>
+          <div id="admin-guilds-list">${loadingBlock()}</div>
+        </div>`;
+      await paintAdminGuildsList(result);
+      document.getElementById("admin-add-guild-btn").addEventListener("click", async () => {
+        const input = document.getElementById("admin-add-guildid");
+        const errEl = document.getElementById("admin-add-guild-error");
+        errEl.style.display = "none";
+        const guildId = input.value.trim();
+        try {
+          await adminApi("/admin/guilds", { method: "POST", body: JSON.stringify({ guildId }) });
+          input.value = "";
+          await paintAdminGuildsSection();
+        } catch (e) { errEl.textContent = e.message; errEl.style.display = "block"; }
+      });
+    }
+
+    toggle.addEventListener("click", async () => {
+      const newMode = isAllowlist ? "all" : "allowlist";
+      try { await adminApi("/admin/guilds-mode", { method: "PUT", body: JSON.stringify({ allowMode: newMode }) }); await paintAdminGuildsSection(); }
+      catch (e) { await DCModal.alert(`Couldn't update: ${e.message}`); }
+    }, { once: true });
   } catch (e) {
-    slot.innerHTML = `<div class="empty-state">Couldn't load servers: ${escapeHtml(e.message)}</div>`;
+    section.innerHTML = `<div class="empty-state">Couldn't load servers: ${escapeHtml(e.message)}</div>`;
   }
+}
+
+async function paintAdminGuildsList(guildsResult) {
+  const slot = document.getElementById("admin-guilds-list");
+  const allowedGuildIds = guildsResult.allowedGuildIds;
+  const knownGuilds = guildsResult.knownGuilds;
+  if (knownGuilds.length === 0) { slot.innerHTML = `<div class="empty-state">The bot isn't in any servers yet.</div>`; return; }
+  const allowedKnown = knownGuilds.filter(g => allowedGuildIds.includes(g.id));
+  const allowedUnknownIds = allowedGuildIds.filter(id => !knownGuilds.some(g => g.id === id));
+  slot.innerHTML = `
+    ${allowedKnown.map(g => `
+    <div class="config-row">
+      <span class="config-row-label" style="display:flex;align-items:center;gap:8px">
+        ${g.icon ? `<img src="https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png" style="width:22px;height:22px;border-radius:6px" alt="">` : `<span class="server-icon" style="width:22px;height:22px;font-size:9px;margin:0">${initials(g.name)}</span>`}
+        ${escapeHtml(g.name)}
+      </span>
+      <button class="btn btn-ghost btn-small" data-guild-revoke="${g.id}"><i class="ti ti-x"></i> Remove</button>
+    </div>`).join("")}
+    ${allowedUnknownIds.map(id => `
+    <div class="config-row">
+      <span class="config-row-label" style="display:flex;align-items:center;gap:8px"><span class="server-icon" style="width:22px;height:22px;font-size:9px;margin:0">?</span>${escapeHtml(id)} <span class="field-hint">(bot not in this server)</span></span>
+      <button class="btn btn-ghost btn-small" data-guild-revoke="${id}"><i class="ti ti-x"></i> Remove</button>
+    </div>`).join("")}
+    ${allowedKnown.length === 0 && allowedUnknownIds.length === 0 ? `<div class="empty-state">No servers granted yet — every server is currently blocked until you add one.</div>` : ""}`;
+  slot.querySelectorAll("[data-guild-revoke]").forEach(btn => btn.addEventListener("click", async () => {
+    try { await adminApi(`/admin/guilds/${btn.dataset.guildRevoke}`, { method: "DELETE" }); await paintAdminGuildsSection(); }
+    catch (e) { await DCModal.alert(`Couldn't update: ${e.message}`); }
+  }));
 }
 
 async function paintAdminAdminsList() {
   const slot = document.getElementById("admin-admins-list");
   const addBtn = document.getElementById("admin-add-btn");
+  const errEl = document.getElementById("admin-add-error");
   if (addBtn) addBtn.addEventListener("click", async () => {
     const input = document.getElementById("admin-add-userid");
     const userId = input.value.trim();
+    errEl.style.display = "none";
     if (!userId) return;
     try { await adminApi("/admin/admins", { method: "POST", body: JSON.stringify({ userId }) }); input.value = ""; await paintAdminAdminsList(); }
-    catch (e) { alert(`Couldn't grant access: ${e.message}`); }
+    catch (e) { errEl.textContent = e.message; errEl.style.display = "block"; }
   });
   try {
     const adminsResult = await adminApi("/admin/admins");
     const ownerUserId = adminsResult.ownerUserId;
     const grantedUserIds = adminsResult.grantedUserIds;
-    slot.innerHTML = `
-      <div class="config-row"><span class="config-row-label">${escapeHtml(ownerUserId)}</span><span class="badge badge-open">Owner</span></div>
-      ${grantedUserIds.length === 0 ? "" : grantedUserIds.map(id => `
+    const profiles = adminsResult.profiles || {};
+    const rowHtml = (id, isOwner) => {
+      const p = profiles[id] || { displayName: id, avatarUrl: null };
+      return `
         <div class="config-row">
-          <span class="config-row-label">${escapeHtml(id)}</span>
-          <button class="btn btn-ghost btn-small" data-revoke-admin="${id}"><i class="ti ti-x"></i> Revoke</button>
-        </div>`).join("")}`;
+          <span class="config-row-label" style="display:flex;align-items:center;gap:8px">
+            <img src="${p.avatarUrl || `https://cdn.discordapp.com/embed/avatars/0.png`}" alt="" style="width:26px;height:26px;border-radius:50%;border:1px solid var(--panel-border)">
+            <span>${escapeHtml(p.displayName)}<div class="field-hint" style="margin-top:1px">${escapeHtml(id)}</div></span>
+          </span>
+          ${isOwner ? `<span class="badge badge-open">Owner</span>` : `<button class="btn btn-ghost btn-small" data-revoke-admin="${id}"><i class="ti ti-x"></i> Revoke</button>`}
+        </div>`;
+    };
+    slot.innerHTML = rowHtml(ownerUserId, true) + grantedUserIds.map(id => rowHtml(id, false)).join("");
     slot.querySelectorAll("[data-revoke-admin]").forEach(btn => btn.addEventListener("click", async () => {
+      const ok = await DCModal.confirm("Revoke this admin's access to the panel?", { title: "Revoke access", confirmLabel: "Revoke", danger: true });
+      if (!ok) return;
       try { await adminApi(`/admin/admins/${btn.dataset.revokeAdmin}`, { method: "DELETE" }); await paintAdminAdminsList(); }
-      catch (e) { alert(`Couldn't revoke: ${e.message}`); }
+      catch (e) { await DCModal.alert(`Couldn't revoke: ${e.message}`); }
     }));
   } catch (e) {
     slot.innerHTML = `<div class="empty-state">Couldn't load admins: ${escapeHtml(e.message)}</div>`;
   }
 }
 
+function wireAdminTicketSearch() {
+  const input = document.getElementById("admin-ticket-search");
+  const resultsSlot = document.getElementById("admin-ticket-search-results");
+  let debounceTimer = null;
+  async function runSearch() {
+    resultsSlot.innerHTML = loadingBlock("Searching…");
+    try {
+      const d = await api(`/admin/tickets/search?q=${encodeURIComponent(input.value.trim())}`);
+      paintAdminTicketSearchResults(d.tickets || []);
+    } catch (e) {
+      resultsSlot.innerHTML = `<div class="empty-state">Couldn't search: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+  function paintAdminTicketSearchResults(tickets) {
+    if (tickets.length === 0) { resultsSlot.innerHTML = `<div class="empty-state">No tickets found.</div>`; return; }
+    resultsSlot.innerHTML = `
+      <div class="ticket-table">
+        <div class="ticket-row head" style="grid-template-columns:70px 1fr 1fr 100px 120px"><span>#</span><span>Server</span><span>Subject</span><span>Status</span><span>Created</span></div>
+        ${tickets.slice(0, 50).map(t => `
+          <div class="ticket-row" style="grid-template-columns:70px 1fr 1fr 100px 120px">
+            <span>${escapeHtml(String(t.number ?? t.id))}</span>
+            <span>${escapeHtml(t.guildName || "Unknown")}</span>
+            <span>${escapeHtml(t.subject || "—")}</span>
+            <span class="badge badge-${t.status}">${t.status}</span>
+            <span>${timeAgoGlobal(t.createdAt)}</span>
+          </div>`).join("")}
+      </div>`;
+  }
+  input.addEventListener("input", () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(runSearch, 300); });
+  runSearch();
+}
 
 // ============================================================
-// My Tickets — every ticket the logged-in user has personally
-// opened, across every server the bot is in (not just servers
-// they administer).
+// My Tickets — filter chips (status/server/subject/date range), a
+// columns toggle, and a detail page with an Author/Created/Subject/
+// Closed-By info panel plus claim/share-link controls.
 // ============================================================
+const MY_TICKETS_COLUMNS = ["opener", "server", "subject", "content", "status", "created"];
+const MY_TICKETS_COLUMN_LABELS = { opener: "Opened by", server: "Server", subject: "Subject", content: "Content", status: "Status", created: "Created" };
+let myTicketsColumnPrefs = JSON.parse(localStorage.getItem("tk_mt_columns") || "null") || [...MY_TICKETS_COLUMNS];
+
 async function renderMyTicketsPanel(root) {
   root.innerHTML = `
-    <h1 class="picker-heading">My Tickets</h1>
-    <p class="picker-sub" id="my-tickets-count">Loading…</p>
+    <div class="dash-header">
+      <div><h1 class="picker-heading">My Tickets</h1><p class="picker-sub" id="my-tickets-count">Loading…</p></div>
+      <div class="dropdown-anchor">
+        <button class="btn btn-ghost btn-small" id="mt-columns-btn"><i class="ti ti-layout-columns"></i> Columns <i class="ti ti-chevron-down"></i></button>
+        <div class="dropdown-panel-floating dropdown-panel-align-right" id="mt-columns-panel" style="display:none">
+          <div class="dropdown-panel-title">Toggle columns</div>
+          ${MY_TICKETS_COLUMNS.map(c => `
+            <label class="dc-checkbox-row"><input type="checkbox" data-mt-col="${c}" ${myTicketsColumnPrefs.includes(c) ? "checked" : ""} hidden><span class="dc-checkbox-box"><i class="ti ti-check"></i></span> ${MY_TICKETS_COLUMN_LABELS[c]}</label>`).join("")}
+        </div>
+      </div>
+    </div>
+    <p class="field-hint" style="margin-bottom:10px">Use filters below to refine results</p>
     <div class="ticket-toolbar">
       <input type="text" class="search-input" id="mt-search" placeholder="Search tickets…">
+      <div class="dropdown-anchor">
+        <button class="btn btn-ghost btn-small" id="mt-status-btn">All Status <i class="ti ti-chevron-down"></i></button>
+        <div class="dropdown-panel-floating" id="mt-status-panel" style="display:none">
+          <div class="dropdown-panel-item" data-mt-status="">All Status</div>
+          <div class="dropdown-panel-item" data-mt-status="open">Active</div>
+          <div class="dropdown-panel-item" data-mt-status="closed">Closed</div>
+        </div>
+      </div>
+      <div class="dropdown-anchor">
+        <button class="btn btn-ghost btn-small" id="mt-server-btn">Server <i class="ti ti-chevron-down"></i></button>
+        <div class="dropdown-panel-floating" id="mt-server-panel" style="display:none">
+          <input type="text" class="dropdown-panel-search" id="mt-server-search" placeholder="Search tickets...">
+          <div id="mt-server-options"></div>
+        </div>
+      </div>
+      <div class="dropdown-anchor">
+        <button class="btn btn-ghost btn-small" id="mt-subject-btn">Subject <i class="ti ti-chevron-down"></i></button>
+        <div class="dropdown-panel-floating" id="mt-subject-panel" style="display:none">
+          <input type="text" class="dropdown-panel-search" id="mt-subject-search" placeholder="Search subjects...">
+          <div id="mt-subject-options"></div>
+        </div>
+      </div>
+      <div class="dropdown-anchor">
+        <button class="btn btn-ghost btn-small" id="mt-date-btn"><i class="ti ti-calendar"></i> Date range</button>
+        <div class="dropdown-panel-floating" id="mt-date-panel" style="display:none"></div>
+      </div>
     </div>
     <div id="my-tickets-list">${loadingBlock()}</div>`;
 
@@ -635,70 +926,313 @@ async function renderMyTicketsPanel(root) {
     return;
   }
   document.getElementById("my-tickets-count").textContent = `~${tickets.length} ticket${tickets.length === 1 ? "" : "s"} found`;
-  paintMyTicketsList(tickets, "");
-  document.getElementById("mt-search").addEventListener("input", (e) => paintMyTicketsList(tickets, e.target.value));
+
+  const filters = { query: "", status: "", server: "", subject: "", dateFrom: null, dateTo: null };
+  function applyFiltersAndPaint() {
+    let rows = tickets;
+    if (filters.query) { const q = filters.query.toLowerCase(); rows = rows.filter(t => (t.subject || "").toLowerCase().includes(q) || (t.guildName || "").toLowerCase().includes(q)); }
+    if (filters.status) rows = rows.filter(t => (filters.status === "open" ? t.status !== "closed" : t.status === "closed"));
+    if (filters.server) rows = rows.filter(t => t.guildName === filters.server);
+    if (filters.subject) rows = rows.filter(t => t.subject === filters.subject);
+    if (filters.dateFrom) rows = rows.filter(t => new Date(t.createdAt) >= filters.dateFrom);
+    if (filters.dateTo) rows = rows.filter(t => new Date(t.createdAt) <= filters.dateTo);
+    paintMyTicketsList(rows, tickets);
+  }
+
+  document.getElementById("mt-search").addEventListener("input", (e) => { filters.query = e.target.value; applyFiltersAndPaint(); });
+
+  wireFloatingDropdown("mt-status-btn", "mt-status-panel");
+  document.querySelectorAll("[data-mt-status]").forEach(item => item.addEventListener("click", () => {
+    filters.status = item.dataset.mtStatus;
+    document.getElementById("mt-status-btn").innerHTML = `${item.textContent} <i class="ti ti-chevron-down"></i>`;
+    closeAllFloatingDropdowns();
+    applyFiltersAndPaint();
+  }));
+
+  wireFloatingDropdown("mt-server-btn", "mt-server-panel");
+  const uniqueServers = [...new Set(tickets.map(t => t.guildName).filter(Boolean))];
+  function paintServerOptions(query) {
+    const q = (query || "").toLowerCase();
+    const opts = uniqueServers.filter(s => s.toLowerCase().includes(q));
+    document.getElementById("mt-server-options").innerHTML = opts.map(s => `<div class="dropdown-panel-item" data-mt-server-opt="${escapeHtml(s)}">${escapeHtml(s)}</div>`).join("") || `<div class="dropdown-panel-empty">No matches</div>`;
+    document.querySelectorAll("[data-mt-server-opt]").forEach(item => item.addEventListener("click", () => {
+      filters.server = item.dataset.mtServerOpt;
+      document.getElementById("mt-server-btn").innerHTML = `${escapeHtml(filters.server)} <i class="ti ti-chevron-down"></i>`;
+      closeAllFloatingDropdowns();
+      applyFiltersAndPaint();
+    }));
+  }
+  paintServerOptions("");
+  document.getElementById("mt-server-search").addEventListener("input", (e) => paintServerOptions(e.target.value));
+
+  wireFloatingDropdown("mt-subject-btn", "mt-subject-panel");
+  const uniqueSubjects = [...new Set(tickets.map(t => t.subject).filter(Boolean))];
+  function paintSubjectOptions(query) {
+    const q = (query || "").toLowerCase();
+    const opts = uniqueSubjects.filter(s => s.toLowerCase().includes(q));
+    document.getElementById("mt-subject-options").innerHTML = opts.map(s => `<div class="dropdown-panel-item" data-mt-subject-opt="${escapeHtml(s)}">${escapeHtml(s)}</div>`).join("") || `<div class="dropdown-panel-empty">No matches</div>`;
+    document.querySelectorAll("[data-mt-subject-opt]").forEach(item => item.addEventListener("click", () => {
+      filters.subject = item.dataset.mtSubjectOpt;
+      document.getElementById("mt-subject-btn").innerHTML = `${escapeHtml(filters.subject)} <i class="ti ti-chevron-down"></i>`;
+      closeAllFloatingDropdowns();
+      applyFiltersAndPaint();
+    }));
+  }
+  paintSubjectOptions("");
+  document.getElementById("mt-subject-search").addEventListener("input", (e) => paintSubjectOptions(e.target.value));
+
+  wireFloatingDropdown("mt-date-btn", "mt-date-panel");
+  paintDateRangePicker(document.getElementById("mt-date-panel"), (from, to) => {
+    filters.dateFrom = from; filters.dateTo = to;
+    closeAllFloatingDropdowns();
+    applyFiltersAndPaint();
+  });
+
+  wireFloatingDropdown("mt-columns-btn", "mt-columns-panel");
+  document.querySelectorAll("[data-mt-col]").forEach(cb => cb.addEventListener("change", () => {
+    myTicketsColumnPrefs = [...document.querySelectorAll("[data-mt-col]")].filter(c => c.checked).map(c => c.dataset.mtCol);
+    localStorage.setItem("tk_mt_columns", JSON.stringify(myTicketsColumnPrefs));
+    applyFiltersAndPaint();
+  }));
+
+  applyFiltersAndPaint();
 }
 
-function paintMyTicketsList(tickets, query) {
-  const list = document.getElementById("my-tickets-list");
-  let rows = tickets;
-  if (query) {
-    const q = query.toLowerCase();
-    rows = rows.filter(t => (t.subject || "").toLowerCase().includes(q) || (t.guildName || "").toLowerCase().includes(q));
+function closeAllFloatingDropdowns() {
+  document.querySelectorAll(".dropdown-panel-floating").forEach(p => { p.style.display = "none"; });
+}
+function wireFloatingDropdown(btnId, panelId) {
+  const btn = document.getElementById(btnId);
+  const panel = document.getElementById(panelId);
+  if (!btn || !panel) return;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isOpen = panel.style.display !== "none";
+    closeAllFloatingDropdowns();
+    panel.style.display = isOpen ? "none" : "block";
+  });
+  panel.addEventListener("click", (e) => e.stopPropagation());
+}
+document.addEventListener("click", () => closeAllFloatingDropdowns());
+
+function paintDateRangePicker(panel, onPick) {
+  const now = new Date();
+  let viewMonth = now.getMonth();
+  let viewYear = now.getFullYear();
+  let rangeStart = null, rangeEnd = null;
+
+  function render() {
+    const first = new Date(viewYear, viewMonth, 1);
+    const startWeekday = first.getDay();
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let cells = "";
+    for (let i = 0; i < startWeekday; i++) cells += `<span class="dc-cal-cell dc-cal-empty"></span>`;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const thisDate = new Date(viewYear, viewMonth, d);
+      const isSelected = (rangeStart && thisDate.getTime() === rangeStart.getTime()) || (rangeEnd && thisDate.getTime() === rangeEnd.getTime());
+      const inRange = rangeStart && rangeEnd && thisDate > rangeStart && thisDate < rangeEnd;
+      cells += `<span class="dc-cal-cell ${isSelected ? "selected" : ""} ${inRange ? "in-range" : ""}" data-cal-day="${d}">${d}</span>`;
+    }
+    panel.innerHTML = `
+      <div class="dc-cal-header">
+        <button class="icon-btn" id="dc-cal-prev"><i class="ti ti-chevron-left"></i></button>
+        <span>${monthNames[viewMonth]} ${viewYear}</span>
+        <button class="icon-btn" id="dc-cal-next"><i class="ti ti-chevron-right"></i></button>
+      </div>
+      <div class="dc-cal-grid">${["Su","Mo","Tu","We","Th","Fr","Sa"].map(d => `<span class="dc-cal-dow">${d}</span>`).join("")}${cells}</div>
+      <div class="dc-cal-footer">
+        <button class="btn btn-ghost btn-small" id="dc-cal-clear">Clear</button>
+        <button class="btn btn-primary btn-small" id="dc-cal-apply">Apply</button>
+      </div>`;
+    panel.querySelector("#dc-cal-prev").addEventListener("click", () => { viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; } render(); });
+    panel.querySelector("#dc-cal-next").addEventListener("click", () => { viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; } render(); });
+    panel.querySelectorAll("[data-cal-day]").forEach(cell => cell.addEventListener("click", () => {
+      const d = new Date(viewYear, viewMonth, Number(cell.dataset.calDay));
+      if (!rangeStart || (rangeStart && rangeEnd)) { rangeStart = d; rangeEnd = null; }
+      else if (d < rangeStart) { rangeEnd = rangeStart; rangeStart = d; }
+      else { rangeEnd = d; }
+      render();
+    }));
+    panel.querySelector("#dc-cal-clear").addEventListener("click", () => { rangeStart = null; rangeEnd = null; onPick(null, null); });
+    panel.querySelector("#dc-cal-apply").addEventListener("click", () => onPick(rangeStart, rangeEnd || rangeStart));
   }
+  render();
+}
+
+// Shared "opened by" preview cell — avatar, display name, and the raw
+// Discord user id in small dim text underneath. Used by both My Tickets
+// and the Ticket Tool module's own staff-facing ticket list so the two
+// stay visually consistent.
+function openerPreviewHtml(t) {
+  const opener = t.opener;
+  const displayName = opener?.displayName || t.openedBy || "Unknown";
+  const userId = opener?.id || t.openedById || "";
+  const avatar = opener?.avatarUrl || "https://cdn.discordapp.com/embed/avatars/0.png";
+  return `
+    <span class="opener-preview">
+      <img class="opener-preview-avatar" src="${escapeHtml(avatar)}" alt="">
+      <span class="opener-preview-text">
+        <span class="opener-preview-name">${escapeHtml(displayName)}</span>
+        ${userId ? `<span class="opener-preview-id">${escapeHtml(userId)}</span>` : ""}
+      </span>
+    </span>`;
+}
+
+function paintMyTicketsList(rows, allTickets) {
+  const list = document.getElementById("my-tickets-list");
   if (rows.length === 0) {
-    list.innerHTML = `<div class="empty-state"><i class="ti ti-ticket-off glyph"></i>${tickets.length === 0 ? "You haven't opened any tickets yet." : "No tickets match."}</div>`;
+    list.innerHTML = `<div class="empty-state"><i class="ti ti-ticket-off glyph"></i>${allTickets.length === 0 ? "You haven't opened any tickets yet." : "No tickets match."}</div>`;
     return;
   }
+  const cols = myTicketsColumnPrefs;
+  const colWidths = { opener: "1.3fr", server: "1fr", subject: "1fr", content: "1.4fr", status: "100px", created: "120px" };
+  const gridTemplate = cols.map(c => colWidths[c]).join(" ");
+  const colLabel = MY_TICKETS_COLUMN_LABELS;
+  const cellHtml = {
+    opener: openerPreviewHtml,
+    server: (t) => `<span style="display:flex;align-items:center;gap:8px">${t.guildIcon ? `<img src="https://cdn.discordapp.com/icons/${t.guildId}/${t.guildIcon}.png" style="width:20px;height:20px;border-radius:6px" alt="">` : `<span class="server-icon" style="width:20px;height:20px;font-size:9px;margin:0">${initials(t.guildName || "?")}</span>`} ${escapeHtml(t.guildName || "Unknown server")}</span>`,
+    subject: (t) => `<span class="cc-trigger-chip" style="background:rgba(139,92,246,.14);color:var(--violet);border-color:rgba(139,92,246,.3)">${escapeHtml(t.subject || "No subject")}</span>`,
+    content: (t) => escapeHtml((t.messages && t.messages[0]?.content) || "—").slice(0, 80),
+    status: (t) => `<span class="badge badge-${t.status}">${t.status}</span>`,
+    created: (t) => timeAgoGlobal(t.createdAt),
+  };
   list.innerHTML = `
     <div class="ticket-table">
-      <div class="ticket-row head"><span>Server</span><span>Subject</span><span class="col-created">Created</span><span>Status</span></div>
+      <div class="ticket-row head" style="grid-template-columns:${gridTemplate}">${cols.map(c => `<span>${colLabel[c]}</span>`).join("")}</div>
       ${rows.map(t => `
-        <div class="ticket-row ticket-row-clickable" data-my-ticket="${t.guildId}:${t.id}">
-          <span style="display:flex;align-items:center;gap:8px">${t.guildIcon ? `<img src="https://cdn.discordapp.com/icons/${t.guildId}/${t.guildIcon}.png" style="width:20px;height:20px;border-radius:6px" alt="">` : `<span class="server-icon" style="width:20px;height:20px;font-size:9px;margin:0">${initials(t.guildName || "?")}</span>`} ${escapeHtml(t.guildName || "Unknown server")}</span>
-          <span>${escapeHtml(t.subject || "No subject")}</span>
-          <span class="col-created">${t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "—"}</span>
-          <span class="badge badge-${t.status}">${t.status}</span>
+        <div class="ticket-row ticket-row-clickable" style="grid-template-columns:${gridTemplate}" data-my-ticket="${t.guildId}:${t.id}">
+          ${cols.map(c => `<span>${cellHtml[c](t)}</span>`).join("")}
         </div>`).join("")}
-    </div>
-    <div id="my-ticket-detail-slot"></div>`;
+    </div>`;
   list.querySelectorAll("[data-my-ticket]").forEach(row => row.addEventListener("click", () => {
     const [guildId, ticketId] = row.dataset.myTicket.split(":");
-    openMyTicketDetail(guildId, ticketId, tickets);
+    openMyTicketDetail(guildId, ticketId);
   }));
 }
 
-async function openMyTicketDetail(guildId, ticketId, tickets) {
+async function openMyTicketDetail(guildId, ticketId, updateUrl = true) {
+  if (updateUrl) routes.go(routes.myTicketUrl(guildId, ticketId));
   const root = document.getElementById("picker-panel-root");
   root.innerHTML = `
     <button class="btn btn-ghost btn-small" id="mt-back"><i class="ti ti-arrow-left"></i> Back to Tickets</button>
     <div id="mt-detail-body" style="margin-top:16px">${loadingBlock("Loading ticket…")}</div>`;
-  document.getElementById("mt-back").addEventListener("click", () => renderMyTicketsPanel(root));
+  document.getElementById("mt-back").addEventListener("click", () => { routes.go("/my-tickets"); renderMyTicketsPanel(root); });
+  await paintTicketDetailBody(document.getElementById("mt-detail-body"), guildId, ticketId);
+}
 
+// Shared ticket-detail renderer (used by both My Tickets and a module's
+// own ticket view) — the info panel (Author/Created/Subject/Closed By),
+// claimed/unclaimed state, share-link controls, and the transcript.
+async function paintTicketDetailBody(body, guildId, ticketId) {
   let data;
   try { data = await api(`/guilds/${guildId}/tickets/${ticketId}/transcript`); }
   catch (e) {
-    document.getElementById("mt-detail-body").innerHTML = `<div class="empty-state"><i class="ti ti-alert-triangle glyph"></i>Couldn't load this ticket: ${escapeHtml(e.message)}</div>`;
+    body.innerHTML = `<div class="empty-state"><i class="ti ti-alert-triangle glyph"></i>Couldn't load this ticket: ${escapeHtml(e.message)}</div>`;
     return;
   }
   const { ticket, messages, hasLog } = data;
-  const body = document.getElementById("mt-detail-body");
   body.innerHTML = `
-    <div class="modal-panel" style="max-width:900px;max-height:none">
-      <div class="transcript-header">
-        <div>
-          <h3 style="font-size:16px;font-weight:700">${escapeHtml(ticket.subject || "No subject")}</h3>
-          <div class="field-hint" style="margin-top:2px">
-            <span class="badge badge-${ticket.status}">${ticket.status}</span>
-            · ${escapeHtml(ticket.subject || "General")} · Created ${timeAgoGlobal(ticket.createdAt)}
-            ${ticket.closedBy ? ` · Closed by ${escapeHtml(ticket.closedBy)}` : ""}
-          </div>
+    <div class="ticket-detail-layout">
+      <div class="ticket-detail-main">
+        <h3 style="font-size:16px;font-weight:700">${escapeHtml(ticket.subject || "No subject")} <span class="field-hint" style="font-weight:400">#${escapeHtml(String(ticket.number ?? ticket.id))}</span></h3>
+        <div class="field-hint" style="margin:6px 0 14px"><span class="badge badge-${ticket.status}">${ticket.status}</span> · ${escapeHtml(ticket.subject || "General")} · Created ${timeAgoGlobal(ticket.createdAt)}</div>
+        <div class="transcript-body" style="max-height:60vh">
+          ${!hasLog
+            ? `<div class="empty-state"><i class="ti ti-message-off glyph"></i>No message log available for this ticket.</div>`
+            : messages.length === 0
+              ? `<div class="empty-state"><i class="ti ti-message-off glyph"></i>No messages were sent in this ticket.</div>`
+              : messages.map(m => `
+                <div class="transcript-msg ${m.deleted ? "deleted" : ""}">
+                  <img class="transcript-msg-avatar" src="${m.authorAvatar ? escapeHtml(m.authorAvatar) : "https://cdn.discordapp.com/embed/avatars/0.png"}" alt="">
+                  <div class="transcript-msg-body">
+                    <div class="transcript-msg-meta">
+                      <span class="transcript-msg-author">${escapeHtml(m.authorName)}</span>
+                      ${m.authorIsBot ? `<span class="staff-tag" style="background:rgba(125,211,252,.14);color:var(--sky, #7dd3fc)">APP</span>` : ""}
+                      ${m.authorIsStaff ? `<span class="staff-tag">STAFF</span>` : ""}
+                      <span class="transcript-msg-time">${new Date(m.createdAt).toLocaleString()}</span>
+                      ${m.deleted ? `<span class="transcript-msg-deleted-tag"><i class="ti ti-trash"></i> deleted</span>` : ""}
+                    </div>
+                    <div class="transcript-msg-content">${escapeHtml(m.content) || `<span class="field-hint">(no text content)</span>`}</div>
+                  </div>
+                </div>`).join("")}
         </div>
       </div>
-      <div class="transcript-body" style="max-height:60vh">
-        ${!hasLog
-          ? `<div class="empty-state"><i class="ti ti-message-off glyph"></i>No message log available for this ticket.</div>`
-          : messages.length === 0
+      <div class="ticket-detail-sidebar">
+        <h4>Ticket Information</h4>
+        <div class="ticket-info-row"><i class="ti ti-user"></i><div><div class="ticket-info-label">Author</div><div class="ticket-info-val">${escapeHtml(ticket.openedBy || "Unknown")}</div></div></div>
+        <div class="ticket-info-row"><i class="ti ti-calendar"></i><div><div class="ticket-info-label">Created</div><div class="ticket-info-val">${timeAgoGlobal(ticket.createdAt)}</div></div></div>
+        <div class="ticket-info-row"><i class="ti ti-tag"></i><div><div class="ticket-info-label">Subject</div><div class="ticket-info-val"><span class="cc-trigger-chip" style="background:rgba(139,92,246,.14);color:var(--violet);border-color:rgba(139,92,246,.3)">${escapeHtml(ticket.subject || "—")}</span></div></div></div>
+        <div class="ticket-info-row"><i class="ti ti-lock"></i><div><div class="ticket-info-label">Claimed By</div><div class="ticket-info-val">${ticket.claimedBy ? escapeHtml(ticket.claimedBy) : `<span class="field-hint">Not claimed yet</span>`}</div></div></div>
+        ${ticket.status === "closed" ? `
+        <div class="ticket-info-row"><i class="ti ti-lock-check"></i><div><div class="ticket-info-label">Closed By</div><div class="ticket-info-val">${escapeHtml(ticket.closedBy || "Unknown")}</div><div class="field-hint">${timeAgoGlobal(ticket.closedAt)}</div></div></div>`
+          : `<div class="field-hint" style="margin-top:8px"><i class="ti ti-lock-open"></i> This ticket hasn't been closed yet.</div>`}
+        <div class="ticket-share-block">
+          <div class="config-row-label" style="margin-bottom:8px">Share link</div>
+          <div id="ticket-share-controls">${loadingBlock("")}</div>
+        </div>
+      </div>
+    </div>`;
+  paintTicketShareControls(document.getElementById("ticket-share-controls"), guildId, ticketId, ticket);
+}
+
+function paintTicketShareControls(slot, guildId, ticketId, ticket) {
+  const shareUrl = ticket.currentShareId ? `${window.location.origin}${CFG.BASE_PATH.replace(/\/$/, "")}/share/${ticket.currentShareId}` : null;
+  slot.innerHTML = shareUrl
+    ? `<div class="dc-share-link"><input type="text" readonly value="${escapeHtml(shareUrl)}" id="ticket-share-url"></div>
+       <div class="field-row-inline" style="margin-top:8px">
+         <button class="btn btn-ghost btn-small" id="ticket-share-copy"><i class="ti ti-copy"></i> Copy</button>
+         <button class="btn btn-ghost btn-small" id="ticket-share-regen"><i class="ti ti-refresh"></i> Regenerate</button>
+       </div>`
+    : `<button class="btn btn-primary btn-small" id="ticket-share-create"><i class="ti ti-link"></i> Create share link</button>`;
+
+  const createBtn = document.getElementById("ticket-share-create");
+  if (createBtn) createBtn.addEventListener("click", async () => {
+    try { await api(`/guilds/${guildId}/tickets/${ticketId}/share`, { method: "POST" }); await refreshShareControls(); }
+    catch (e) { await DCModal.alert(`Couldn't create share link: ${e.message}`); }
+  });
+  const copyBtn = document.getElementById("ticket-share-copy");
+  if (copyBtn) copyBtn.addEventListener("click", () => {
+    document.getElementById("ticket-share-url").select();
+    navigator.clipboard?.writeText(shareUrl).catch(() => {});
+  });
+  const regenBtn = document.getElementById("ticket-share-regen");
+  if (regenBtn) regenBtn.addEventListener("click", async () => {
+    const ok = await DCModal.confirm("The old link will stop working immediately. Continue?", { title: "Regenerate share link", confirmLabel: "Regenerate" });
+    if (!ok) return;
+    try { await api(`/guilds/${guildId}/tickets/${ticketId}/share`, { method: "POST" }); await refreshShareControls(); }
+    catch (e) { await DCModal.alert(`Couldn't regenerate: ${e.message}`); }
+  });
+
+  async function refreshShareControls() {
+    try {
+      const fresh = await api(`/guilds/${guildId}/tickets/${ticketId}/transcript`);
+      paintTicketShareControls(slot, guildId, ticketId, fresh.ticket);
+    } catch { /* keep old controls visible on failure */ }
+  }
+}
+
+// ============================================================
+// Public share page — no auth, reachable at /share/:shareId
+// ============================================================
+async function enterSharePage(shareId) {
+  showScreen("screen-share");
+  const root = document.getElementById("share-root");
+  root.innerHTML = loadingBlock("Loading ticket…");
+  try {
+    const data = await api(`/share/tickets/${shareId}`);
+    const { ticket, guildName, messages } = data;
+    root.innerHTML = `
+      <div class="brand-row" style="margin-bottom:18px"><div class="brand-glyph">DC</div>Dungeon Crawlers</div>
+      <div class="modal-panel" style="max-width:800px;max-height:none;margin:0 auto">
+        <div class="transcript-header">
+          <div>
+            <h3 style="font-size:16px;font-weight:700">${escapeHtml(ticket.subject || "No subject")} <span class="field-hint" style="font-weight:400">#${escapeHtml(String(ticket.number ?? ticket.id))}</span></h3>
+            <div class="field-hint" style="margin-top:2px">${escapeHtml(guildName)} · <span class="badge badge-${ticket.status}">${ticket.status}</span> · Created ${timeAgoGlobal(ticket.createdAt)}</div>
+          </div>
+        </div>
+        <div class="transcript-body" style="max-height:70vh">
+          ${messages.length === 0
             ? `<div class="empty-state"><i class="ti ti-message-off glyph"></i>No messages were sent in this ticket.</div>`
             : messages.map(m => `
               <div class="transcript-msg ${m.deleted ? "deleted" : ""}">
@@ -708,24 +1242,30 @@ async function openMyTicketDetail(guildId, ticketId, tickets) {
                     <span class="transcript-msg-author">${escapeHtml(m.authorName)}</span>
                     ${m.authorIsStaff ? `<span class="staff-tag">STAFF</span>` : ""}
                     <span class="transcript-msg-time">${new Date(m.createdAt).toLocaleString()}</span>
-                    ${m.deleted ? `<span class="transcript-msg-deleted-tag"><i class="ti ti-trash"></i> deleted</span>` : ""}
                   </div>
                   <div class="transcript-msg-content">${escapeHtml(m.content) || `<span class="field-hint">(no text content)</span>`}</div>
                 </div>
               </div>`).join("")}
-      </div>
-    </div>`;
-}
-function timeAgoGlobal(iso) {
-  if (!iso) return "—";
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
-  return days <= 0 ? "today" : `${days} day${days === 1 ? "" : "s"} ago`;
+        </div>
+      </div>`;
+  } catch (e) {
+    root.innerHTML = `
+      <div class="brand-row" style="margin-bottom:18px"><div class="brand-glyph">DC</div>Dungeon Crawlers</div>
+      <div class="empty-state"><i class="ti ti-link-off glyph"></i>${escapeHtml(e.message || "This share link is invalid.")}</div>`;
+  }
 }
 
 // ============================================================
 // Dashboard shell
 // ============================================================
-const CORE_PANELS = [];
+// Status isn't a real module (it has no server-side .server.js, no
+// toggle, no Module_Data file) — it's core dashboard functionality, so
+// it lives in CORE_PANELS rather than window.DC.modules. It still
+// renders through the exact same switchPanel/buildSidebar machinery as
+// every module, which is what makes it show the same full sidebar
+// (server context, module list, profile/theme footer) instead of a
+// separate stripped-down screen.
+const CORE_PANELS = [{ id: "status", label: "Status", icon: "ti-activity" }];
 
 let modulesLoaded = false;
 let modulesLoadFailed = false;
@@ -740,17 +1280,13 @@ function loadScript(src) {
   });
 }
 function loadStyle(href) {
-  if (document.querySelector(`link[href="${href}"]`)) return; // already injected
+  if (document.querySelector(`link[href="${href}"]`)) return;
   const l = document.createElement("link");
   l.rel = "stylesheet";
   l.href = href;
   document.head.appendChild(l);
 }
 
-// Module code lives entirely on your local bot (bot/Modules/<id>/), not
-// in this repo — the site fetches the manifest, then each module's JS
-// (and CSS, if it has one) at runtime. If the bot isn't running, modules
-// simply won't appear; the dashboard still works for Status.
 async function ensureModulesLoaded() {
   if (modulesLoaded || modulesLoadFailed) return;
   try {
@@ -762,31 +1298,58 @@ async function ensureModulesLoaded() {
     }
     modulesLoaded = true;
   } catch {
-    modulesLoadFailed = true; // Bot Servers down, or Modules/ is empty — dashboard still works without extra modules
+    modulesLoadFailed = true;
   }
 }
 
-function buildContext() {
+function buildContext(extra = {}) {
   const session = getSession();
   return {
     guildId: currentGuild.id,
     userId: session?.user?.id,
     api: (path, options) => api(path, options),
+    modal: DCModal,
+    routes,
+    // Exposed so a module (ticket-tool) can render the same ticket detail
+    // page — info panel, transcript, share-link controls — that My
+    // Tickets and the deep-linked /ticket/:id route use, instead of
+    // reimplementing its own transcript viewer.
+    renderTicketDetail: (container, guildId, ticketId) => paintTicketDetailBody(container, guildId, ticketId),
+    openerPreviewHtml,
+    navigateToTab: (tab) => { routes.go(routes.moduleUrl(currentGuild.id, currentPanelId, tab)); switchTab(tab); },
+    navigateToTicket: (ticketId) => { routes.go(routes.ticketUrl(currentGuild.id, currentPanelId, ticketId)); switchToTicketView(ticketId); },
+    ...extra,
   };
+}
+
+// Used by navigateToTicket so a module can push a person straight into a
+// ticket's detail view without a full page navigation — mirrors what
+// enterDashboard does for a page-load-time deep link.
+function switchToTicketView(ticketId) {
+  document.querySelectorAll(".nav-item").forEach(n => n.classList.toggle("active", n.dataset.panel === currentPanelId));
+  const root = document.getElementById("module-root");
+  root.innerHTML = `<button class="btn btn-ghost btn-small" id="dash-ticket-back"><i class="ti ti-arrow-left"></i> Back</button><div id="dash-ticket-body" style="margin-top:16px">${loadingBlock("Loading ticket…")}</div>`;
+  document.getElementById("dash-ticket-back").addEventListener("click", () => { routes.go(routes.moduleUrl(currentGuild.id, currentPanelId)); switchPanel(currentPanelId, false); });
+  paintTicketDetailBody(document.getElementById("dash-ticket-body"), currentGuild.id, ticketId);
 }
 
 function navItemHtml(id, icon, label, toggleable, isEnabled) {
   const disabledClass = toggleable && !isEnabled ? "module-disabled" : "";
-  return `<div class="nav-item ${disabledClass}" data-panel="${id}">
-    <i class="ti ${icon}" aria-hidden="true"></i><span class="nav-item-label">${label}</span>
-    ${toggleable ? `<button class="toggle nav-item-toggle ${isEnabled ? "on" : ""}" data-module-toggle="${id}" aria-label="Toggle ${label}"></button>` : ""}
+  return `<div class="nav-item ${disabledClass}" data-panel="${id}" title="${escapeHtml(label)}">
+    <i class="ti ${icon}" aria-hidden="true"></i><span class="nav-item-label">${escapeHtml(label)}</span>
+    ${toggleable ? `<button class="toggle nav-item-toggle ${isEnabled ? "on" : ""}" data-module-toggle="${id}" aria-label="Toggle ${escapeHtml(label)}"></button>` : ""}
   </div>`;
 }
 
 function buildSidebar(disabledModules) {
   disabledModules = disabledModules || [];
   const wrap = document.getElementById("dash-nav-items");
-  const modules = window.DC?.modules || [];
+  // The custom-commands module's built-in "Bot Status" slash command is
+  // intentionally excluded here — it's a Discord slash command, not a
+  // dashboard page, and only ever appears in that module's own command
+  // list. This dashboard's own Status page is added via CORE_PANELS
+  // below instead, since it's not a toggleable module.
+  const modules = (window.DC?.modules || []).filter(m => m.id !== "status");
   // Preserve which panel is currently open across the rebuild below —
   // wrap.innerHTML replaces every .nav-item from scratch, which would
   // otherwise silently drop the .active class (and, since the module
@@ -795,10 +1358,6 @@ function buildSidebar(disabledModules) {
   // that very toggle.
   const activePanel = wrap.querySelector(".nav-item.active")?.dataset.panel || null;
 
-  // Toggling a module off is purely cosmetic — it never disappears from
-  // this list or stops working. The switch just visually greys the label
-  // out as a personal "I've turned this off" marker; the module panel
-  // stays fully clickable either way.
   const modulesHtml = modules.length
     ? `<div class="nav-section-label">Modules</div>${modules.map(m => navItemHtml(m.id, m.icon, m.label, true, !disabledModules.includes(m.id))).join("")}`
     : "";
@@ -807,8 +1366,9 @@ function buildSidebar(disabledModules) {
   wrap.innerHTML = modulesHtml + generalHtml;
   if (activePanel) wrap.querySelectorAll(".nav-item").forEach(n => n.classList.toggle("active", n.dataset.panel === activePanel));
   wrap.querySelectorAll(".nav-item").forEach(n => n.addEventListener("click", (e) => {
-    if (e.target.closest("[data-module-toggle]")) return; // the toggle button handles its own click
-    switchPanel(n.dataset.panel);
+    if (e.target.closest("[data-module-toggle]")) return;
+    routes.go(routes.moduleUrl(currentGuild.id, n.dataset.panel));
+    switchPanel(n.dataset.panel, false);
   }));
   wrap.querySelectorAll("[data-module-toggle]").forEach(btn => btn.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -818,46 +1378,41 @@ function buildSidebar(disabledModules) {
   }));
 }
 
-function openModuleToggleConfirm(moduleId, turningOn, btn, disabledModules) {
+async function openModuleToggleConfirm(moduleId, turningOn, btn, disabledModules) {
   const label = (window.DC?.modules || []).find(m => m.id === moduleId)?.label || moduleId;
-  let overlay = document.getElementById("module-toggle-overlay");
-  if (overlay) overlay.remove();
-  overlay = document.createElement("div");
-  overlay.id = "module-toggle-overlay";
-  overlay.className = "modal-overlay";
-  overlay.innerHTML = `
-    <div class="modal-panel" style="max-width:380px;max-height:none;padding:20px">
-      <h3 style="font-size:14.5px;font-weight:700;margin-bottom:8px">${turningOn ? "Turn on" : "Turn off"} ${escapeHtml(label)}?</h3>
-      <p class="field-hint" style="margin-bottom:16px">This is just a personal marker — ${escapeHtml(label)} keeps working normally either way, this only changes how it looks in your sidebar.</p>
-      <div style="display:flex;justify-content:flex-end;gap:8px">
-        <button class="btn btn-ghost btn-small" id="mtc-cancel">Cancel</button>
-        <button class="btn btn-primary btn-small" id="mtc-confirm">${turningOn ? "Turn on" : "Turn off"}</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
-  document.getElementById("mtc-cancel").addEventListener("click", () => overlay.remove());
-  document.getElementById("mtc-confirm").addEventListener("click", async () => {
-    overlay.remove();
-    try {
-      await api(`/guilds/${currentGuild.id}/modules/${moduleId}`, { method: "PUT", body: JSON.stringify({ enabled: turningOn }) });
-      currentGuildDisabledModules = turningOn ? disabledModules.filter(id => id !== moduleId) : [...disabledModules, moduleId];
-      buildSidebar(currentGuildDisabledModules);
-      // The toggle is only ever visible on the module you're currently
-      // looking at (see navItemHtml/CSS), so flipping it always affects
-      // the open module — update its overlay immediately rather than
-      // requiring a navigate-away-and-back to see the change take effect.
-      const wrap = document.getElementById("module-root-wrap");
-      const moduleOverlay = document.getElementById("module-disabled-overlay");
-      if (wrap && moduleOverlay) {
-        wrap.classList.toggle("disabled-active", !turningOn);
-        moduleOverlay.style.display = turningOn ? "none" : "flex";
-      }
-    } catch (e2) { alert(`Couldn't update module: ${e2.message}`); }
-  });
+  const ok = await DCModal.confirm(
+    `${label} keeps working normally either way — this only changes how it looks in your sidebar.`,
+    { title: `${turningOn ? "Turn on" : "Turn off"} ${label}?`, confirmLabel: turningOn ? "Turn on" : "Turn off" }
+  );
+  if (!ok) return;
+  try {
+    await api(`/guilds/${currentGuild.id}/modules/${moduleId}`, { method: "PUT", body: JSON.stringify({ enabled: turningOn }) });
+    currentGuildDisabledModules = turningOn ? disabledModules.filter(id => id !== moduleId) : [...disabledModules, moduleId];
+    buildSidebar(currentGuildDisabledModules);
+    // The toggle is only ever visible on the module you're currently
+    // looking at (see navItemHtml/CSS), so flipping it always affects
+    // the open module — update its overlay immediately rather than
+    // requiring a navigate-away-and-back to see the change take effect.
+    if (currentPanelId === moduleId) setModuleDisabledOverlay(!turningOn);
+  } catch (e2) { await DCModal.alert(`Couldn't update module: ${e2.message}`); }
 }
 
-async function enterDashboard(panel) {
+// Shows/hides the translucent "this module is off" overlay on top of
+// module-root — the module underneath keeps rendering and working
+// completely normally either way (toggling is purely cosmetic); this
+// never replaces its content, only sits above it.
+function setModuleDisabledOverlay(isDisabled) {
+  const wrap = document.getElementById("module-root-wrap");
+  const overlay = document.getElementById("module-disabled-overlay");
+  if (!wrap || !overlay) return;
+  wrap.classList.toggle("disabled-active", isDisabled);
+  overlay.style.display = isDisabled ? "flex" : "none";
+}
+
+let currentPanelId = "ticket-tool";
+let currentTab = null;
+
+async function enterDashboard(panel, { tab, ticketId } = {}) {
   showScreen("screen-dashboard");
   renderSidebarBottom("dash-sidebar-bottom");
   const session = getSession();
@@ -875,8 +1430,6 @@ async function enterDashboard(panel) {
     : initials(currentGuild.name || "S");
   document.getElementById("dash-crumb").innerHTML = `Servers <i class="ti ti-chevron-right" style="font-size:12px"></i> <b>${escapeHtml(currentGuild.name || "…")}</b>`;
 
-  // resolve viewer's role (owner/admin) and which modules this server has
-  // disabled via one shared meta call, once we know the guild
   const sub = document.getElementById("dash-server-sub");
   let guildDisabledModules = [];
   if (botInfoCache) {
@@ -888,44 +1441,68 @@ async function enterDashboard(panel) {
     } else {
       sub.textContent = "Connected";
     }
+    if (meta && meta.allowed === false) {
+      buildSidebar(guildDisabledModules);
+      document.getElementById("module-root").innerHTML = `
+        <div class="empty-state" style="max-width:520px;margin:40px auto"><i class="ti ti-lock-off glyph"></i>${escapeHtml(meta.notAllowedMessage || "This server isn't authorized to use this tool.")}</div>`;
+      return;
+    }
   } else {
     sub.textContent = "Bot Servers down";
   }
   buildSidebar(guildDisabledModules);
 
-  switchPanel(panel, false);
+  currentPanelId = panel;
+  currentTab = tab || null;
+
+  if (ticketId) {
+    document.querySelectorAll(".nav-item").forEach(n => n.classList.toggle("active", n.dataset.panel === panel));
+    const root = document.getElementById("module-root");
+    root.innerHTML = `<button class="btn btn-ghost btn-small" id="dash-ticket-back"><i class="ti ti-arrow-left"></i> Back</button><div id="dash-ticket-body" style="margin-top:16px">${loadingBlock("Loading ticket…")}</div>`;
+    document.getElementById("dash-ticket-back").addEventListener("click", () => { routes.go(routes.moduleUrl(currentGuild.id, panel)); switchPanel(panel, false); });
+    await paintTicketDetailBody(document.getElementById("dash-ticket-body"), currentGuild.id, ticketId);
+    return;
+  }
+
+  switchPanel(panel, false, tab);
 }
 
-function switchPanel(name, updateUrl = true) {
+function switchPanel(name, updateUrl = true, tab = null) {
+  currentPanelId = name;
+  currentTab = tab;
   document.querySelectorAll(".nav-item").forEach(n => n.classList.toggle("active", n.dataset.panel === name));
-  if (updateUrl) routes.go(`/servers/${currentGuild.id}/${name}`);
+  if (updateUrl) routes.go(routes.moduleUrl(currentGuild.id, name, tab));
+
+  // A disabled module still renders and works completely normally
+  // underneath (toggling is purely cosmetic) — setModuleDisabledOverlay
+  // only adds a translucent grey overlay with a centered "this module
+  // is off" message on top of it, and never skips actually rendering
+  // the module itself.
+  setModuleDisabledOverlay(currentGuildDisabledModules.includes(name));
+
   const root = document.getElementById("module-root");
   root.innerHTML = loadingBlock();
 
-  // A disabled module still renders and works completely normally
-  // underneath (see the note in buildSidebar — toggling is cosmetic) —
-  // this only adds a translucent grey overlay with a centered "this
-  // module is off" message on top of it, and blocks clicks from
-  // reaching the module underneath while the overlay is up.
-  const wrap = document.getElementById("module-root-wrap");
-  const overlay = document.getElementById("module-disabled-overlay");
-  const isDisabled = currentGuildDisabledModules.includes(name);
-  wrap.classList.toggle("disabled-active", isDisabled);
-  overlay.style.display = isDisabled ? "flex" : "none";
-
   const mod = window.DC?.getModule(name);
-  if (mod) { mod.render(root, buildContext()); return; }
+  if (mod) { mod.render(root, buildContext(), tab); return; }
 
   const renderers = { status: renderStatusModule };
   (renderers[name] || renderStatusModule)(root);
 }
 
+function switchTab(tab) {
+  currentTab = tab;
+  routes.go(routes.moduleUrl(currentGuild.id, currentPanelId, tab));
+}
+
 // ============================================================
-// Status module
+// Status module — colored uptime bar (green/yellow/orange/red by worst
+// incident severity that day) with a click-to-open popover (not a hover
+// tooltip) showing that day's detail.
 // ============================================================
 async function renderStatusModule(root) {
   await refreshHeroStatus();
-  root.innerHTML = `<div class="dash-header"><div><h1>Status</h1><p>Uptime history for your locally hosted bot.</p></div></div><div id="status-body">${loadingBlock()}</div>`;
+  root.innerHTML = `<div class="dash-header"><div><h1>Status</h1><p>Uptime history for your bot.</p></div></div><div id="status-body">${loadingBlock()}</div>`;
   const body = document.getElementById("status-body");
   if (!botInfoCache) {
     body.innerHTML = `
@@ -940,7 +1517,7 @@ async function renderStatusModule(root) {
     return;
   }
 
-  const days = buildDayBuckets(history.incidents, 90);
+  const days = history.days || [];
   body.innerHTML = `
     <div class="status-banner ${history.online ? "up" : "down"}"><i class="ti ${history.online ? "ti-circle-check" : "ti-alert-triangle"}"></i> ${history.online ? "All Systems Operational" : "Bot Offline"}</div>
     <div class="status-uptime-card">
@@ -949,14 +1526,13 @@ async function renderStatusModule(root) {
         <span class="status-pip ${history.online ? "online" : "offline"}"><span class="status-dot"></span>${history.online ? "Operational" : "Down"}</span>
       </div>
       <div class="status-daybar" id="status-daybar">
-        ${days.map((d, i) => `<div class="status-day status-day-${d.level}" data-day-idx="${i}"></div>`).join("")}
+        ${days.map((d, i) => `<div class="status-day status-day-${d.severity}" data-day-idx="${i}"></div>`).join("")}
       </div>
       <div class="status-daybar-footer">
         <span>90 days ago</span>
         <span>${history.uptimePercent}% uptime over 90 days</span>
         <span>Today</span>
       </div>
-      <div class="status-day-tooltip" id="status-day-tooltip" style="display:none"></div>
     </div>
     <div class="overview-grid" style="grid-template-columns:repeat(3,1fr);margin-top:18px">
       <div class="overview-card"><div class="num">${formatUptime(history.currentUptimeSeconds)}</div><div class="lbl">Current uptime</div></div>
@@ -975,14 +1551,13 @@ async function renderStatusModule(root) {
         ? `<div class="empty-state">No downtime recorded.</div>`
         : history.incidents.slice(0, 25).map(i => `
           <div class="config-row" style="align-items:flex-start">
-            <span class="config-row-label">${new Date(i.startedAt).toLocaleString()}${i.note ? `<div class="field-hint" style="margin-top:2px;font-weight:400">${escapeHtml(i.note)}</div>` : ""}</span>
+            <span class="config-row-label"><span class="severity-dot severity-${i.severity}"></span>${new Date(i.startedAt).toLocaleString()}${i.note ? `<div class="field-hint" style="margin-top:2px;font-weight:400">${escapeHtml(i.note)}</div>` : ""}</span>
             <span class="config-row-label" style="font-weight:400;color:var(--text-dim)">${formatDuration(i.durationSeconds)} downtime</span>
           </div>`).join("")}
     </div>`;
 
-  wireStatusDayTooltips(days);
-  if (currentGuild?.id) paintStatusModulesList();
-  else document.getElementById("status-modules-list").innerHTML = `<div class="empty-state">Open a server's dashboard first to manage its modules.</div>`;
+  wireStatusDayPopover(days, history.incidents);
+  paintStatusModulesList();
 }
 
 async function paintStatusModulesList() {
@@ -991,7 +1566,7 @@ async function paintStatusModulesList() {
   try {
     const meta = await api(`/guilds/${currentGuild.id}/meta?userId=${getSession().user.id}`);
     const disabled = meta.disabledModules || [];
-    const modules = window.DC?.modules || [];
+    const modules = (window.DC?.modules || []).filter(m => m.id !== "status");
     if (modules.length === 0) { slot.innerHTML = `<div class="empty-state">No modules loaded.</div>`; return; }
     slot.innerHTML = modules.map(m => `
       <div class="config-row">
@@ -1003,62 +1578,37 @@ async function paintStatusModulesList() {
   }
 }
 
-function wireStatusDayTooltips(days) {
+// Click (not hover) opens a fixed info card — "30 Jun 2026 / No downtime
+// recorded on this day." — via the shared modal system.
+function wireStatusDayPopover(days, incidents) {
   const bar = document.getElementById("status-daybar");
-  const tooltip = document.getElementById("status-day-tooltip");
-  if (!bar || !tooltip) return;
+  if (!bar) return;
   bar.querySelectorAll("[data-day-idx]").forEach(el => {
-    el.addEventListener("mouseenter", () => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
       const d = days[+el.dataset.dayIdx];
-      tooltip.innerHTML = `
-        <div class="status-day-tooltip-date">${d.dateLabel}</div>
-        ${d.downtimeSeconds > 0 ? `
-          <div class="status-day-tooltip-row"><i class="ti ti-alert-triangle" style="color:var(--amber)"></i> ${formatDuration(d.downtimeSeconds)} downtime</div>
-          <div class="status-day-tooltip-pct">${d.pctOfDay}% of the day</div>
-          ${d.notes.length ? d.notes.map(n => `<div class="status-day-tooltip-note">${escapeHtml(n)}</div>`).join("") : ""}
-        ` : `<div class="status-day-tooltip-row ok"><i class="ti ti-check"></i> No downtime recorded</div>`}`;
-      const rect = el.getBoundingClientRect();
-      const barRect = bar.getBoundingClientRect();
-      const tooltipWidth = 220; // matches min-width + padding below
-      const idealLeft = rect.left - barRect.left + rect.width / 2;
-      const clampedLeft = Math.max(tooltipWidth / 2, Math.min(barRect.width - tooltipWidth / 2, idealLeft));
-      tooltip.style.left = `${clampedLeft}px`;
-      tooltip.style.display = "block";
+      const dayIncidents = incidents.filter(i => new Date(i.startedAt).toISOString().slice(0, 10) === d.date);
+      const dateLabel = new Date(d.date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+      const bodyHtml = `
+        <div class="dc-modal-header"><h3>${dateLabel}</h3></div>
+        <div class="dc-modal-body">
+          ${dayIncidents.length === 0
+            ? `<div class="status-day-ok-row"><i class="ti ti-check"></i> No downtime recorded on this day.</div>`
+            : dayIncidents.map(i => `
+              <div class="status-day-incident-row">
+                <span class="severity-dot severity-${i.severity}"></span>
+                <div>
+                  <div>${formatDuration(i.durationSeconds)} downtime</div>
+                  ${i.note ? `<div class="field-hint" style="margin-top:2px">${escapeHtml(i.note)}</div>` : ""}
+                </div>
+              </div>`).join("")}
+        </div>
+        <div class="dc-modal-footer"><button class="btn btn-ghost btn-small" id="dc-modal-close-only">Close</button></div>`;
+      DCModal.custom(bodyHtml, { maxWidth: "360px", onMount: (r) => r.querySelector("#dc-modal-close-only").addEventListener("click", DCModal.close) });
     });
-    el.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
   });
 }
 
-function buildDayBuckets(incidents, numDays) {
-  const now = new Date();
-  const days = [];
-  for (let i = numDays - 1; i >= 0; i--) {
-    const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0); dayStart.setDate(dayStart.getDate() - i);
-    const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1);
-    const dayIncidents = incidents.filter(inc => {
-      const s = new Date(inc.startedAt), e = new Date(inc.endedAt);
-      return s < dayEnd && e > dayStart;
-    });
-    const downtimeMs = dayIncidents.reduce((sum, inc) => {
-      const s = Math.max(new Date(inc.startedAt).getTime(), dayStart.getTime());
-      const e = Math.min(new Date(inc.endedAt).getTime(), dayEnd.getTime());
-      return sum + Math.max(0, e - s);
-    }, 0);
-    const pctDown = downtimeMs / 86400000;
-    let level = "ok";
-    if (dayStart > now) level = "future";
-    else if (pctDown > 0.1) level = "major";
-    else if (pctDown > 0) level = "minor";
-    days.push({
-      level,
-      dateLabel: dayStart.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }),
-      downtimeSeconds: Math.round(downtimeMs / 1000),
-      pctOfDay: Math.round(pctDown * 1000) / 10,
-      notes: dayIncidents.filter(inc => inc.note).map(inc => inc.note),
-    });
-  }
-  return days;
-}
 function formatDuration(totalSeconds) {
   if (totalSeconds < 60) return `${totalSeconds}s`;
   const mins = Math.floor(totalSeconds / 60);
@@ -1074,16 +1624,10 @@ function formatDuration(totalSeconds) {
 // Wiring
 // ============================================================
 document.addEventListener("DOMContentLoaded", () => {
-  // Defensive: a mismatch between index.html and app.js (stale deploy of
-  // one but not the other, a renamed id, etc.) should never crash the
-  // whole boot sequence again — one missing element used to throw here
-  // and silently kill every listener after it, including boot() itself,
-  // which is exactly why the status pip could get stuck on "Checking..."
-  // forever with no visible error on the page.
   function on(id, event, handler) {
     const el = document.getElementById(id);
     if (el) el.addEventListener(event, handler);
-    else console.warn(`Wiring: #${id} not found in the page — skipping its listener. If this persists, index.html and app.js are probably out of sync (redeploy both together).`);
+    else console.warn(`Wiring: #${id} not found in the page — skipping its listener.`);
   }
 
   on("btn-login", "click", (e) => { e.preventDefault(); beginLogin(); });
@@ -1093,17 +1637,18 @@ document.addEventListener("DOMContentLoaded", () => {
     if (window.location.pathname.includes("/servers/")) { routes.go("/dashboard"); enterPicker(); }
     else window.history.back();
   });
-  on("status-back-btn", "click", () => { window.history.back(); });
 
   boot();
   setInterval(async () => {
     const wasOnline = botInfoCache?.online;
     await refreshHeroStatus();
-    // if the bot just came back up while a dashboard is open, load
-    // modules and rebuild the sidebar so newly-available modules appear
     if (!wasOnline && botInfoCache?.online && document.getElementById("screen-dashboard").classList.contains("active")) {
       await ensureModulesLoaded();
       buildSidebar(currentGuildDisabledModules);
     }
   }, 15000);
 });
+
+// Expose the modal API for modules to use.
+window.DC = window.DC || {};
+window.DC.modal = DCModal;
