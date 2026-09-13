@@ -267,9 +267,17 @@ async function api(path, options = {}) {
     let detail = "";
     try {
       const text = await res.text();
-      try { detail = JSON.parse(text).error || text; } catch { detail = text; }
+      try {
+        detail = JSON.parse(text).error || "";
+      } catch {
+        // The bot didn't return JSON (an unexpected HTML error page from
+        // Express itself, a proxy, etc). Rather than dumping raw HTML
+        // markup into the UI (unreadable, and looks broken), fall back
+        // to a short, honest message that still names the HTTP status.
+        detail = "";
+      }
     } catch { /* couldn't even read the body */ }
-    throw new Error(detail || `Request failed: ${res.status}`);
+    throw new Error(detail || `Request failed (HTTP ${res.status}). The bot may need to be restarted — check its console output.`);
   }
   return res.json();
 }
@@ -624,8 +632,8 @@ async function adminApi(path, options = {}) {
   if (res.status === 401) { setAdminToken(null); throw new Error("Session expired — please log in again"); }
   if (!res.ok) {
     let detail = "";
-    try { detail = (await res.json()).error; } catch {}
-    throw new Error(detail || `Request failed: ${res.status}`);
+    try { detail = (await res.json()).error; } catch { /* not JSON — fall back below */ }
+    throw new Error(detail || `Request failed (HTTP ${res.status}). The bot may need to be restarted — check its console output.`);
   }
   return res.json();
 }
@@ -920,8 +928,8 @@ async function renderMyTicketsPanel(root) {
   try {
     const d = await api(`/tickets?userId=${session.user.id}`);
     tickets = d.tickets || [];
-  } catch {
-    document.getElementById("my-tickets-list").innerHTML = `<div class="empty-state"><i class="ti ti-plug-connected-x glyph"></i>Couldn't load your tickets — Bot Servers down.</div>`;
+  } catch (e) {
+    document.getElementById("my-tickets-list").innerHTML = `<div class="empty-state"><i class="ti ti-alert-triangle glyph"></i>Couldn't load your tickets: ${escapeHtml(e.message)}</div>`;
     document.getElementById("my-tickets-count").textContent = "";
     return;
   }
