@@ -121,6 +121,14 @@ html { scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; 
 
 /* ---------- Dashboard shell (sidebar + module content) ---------- */
 .dash-body { display: grid; grid-template-columns: 252px 1fr; height: calc(100vh - 57px); }
+/* .dash-nav / .dash-main used to redeclare "grid-template-columns:
+   252px 1fr" locally, which is correct, but .dash-main previously
+   also capped its own content to max-width:1140px — on any screen
+   wider than ~1170px total that left a large, permanently empty gap
+   down the right side instead of the module content actually filling
+   the pane it was given. Width is now unconstrained (module content
+   fills the full pane); individual modules that want a narrower
+   reading column (e.g. a form) can still cap their own inner wrapper. */
 .dash-nav { border-right: 1px solid var(--panel-border); padding: 18px 12px; background: var(--sidebar-bg); display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
 .dash-nav-server { display: flex; align-items: center; gap: 9px; padding: 8px 8px 14px; margin-bottom: 6px; border-bottom: 1px solid var(--panel-border); flex-shrink: 0; }
 .dash-nav-server .server-icon { width: 30px; height: 30px; font-size: 11px; margin-bottom: 0; border-radius: 8px; }
@@ -147,7 +155,7 @@ html { scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; 
 .nav-item.active { background: rgba(139,92,246,.14); color: var(--violet); font-weight: 600; }
 .nav-item.module-disabled .nav-item-label { opacity: .55; }
 
-.dash-main { padding: 26px 30px 60px; max-width: 1140px; overflow-y: auto; height: 100%; }
+.dash-main { padding: 26px 30px 60px; overflow-y: auto; height: 100%; }
 
 /* Disabled-module overlay: the module underneath still renders and
    works exactly like normal (toggling a module off is purely cosmetic)
@@ -163,14 +171,22 @@ html { scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; 
 .module-disabled-overlay-text { display: flex; align-items: center; gap: 8px; background: var(--panel-solid); border: 1px solid var(--panel-border); padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 700; color: var(--text); box-shadow: 0 12px 30px -8px rgba(0,0,0,.5); }
 .module-disabled-overlay-text i { color: var(--text-dim); font-size: 15px; }
 
-/* Generic app shell used by the picker and status screens \u2014 same visual
+/* Generic app shell used by the picker and status screens — same visual
    language as .dash-body/.dash-nav/.dash-main but without requiring a
-   selected server (no server-icon header block). */
-.app-shell { display: grid; grid-template-columns: 252px 1fr; height: 100vh; }
-.app-sidebar { border-right: 1px solid var(--panel-border); padding: 18px 12px; background: var(--sidebar-bg); display: flex; flex-direction: column; height: 100vh; overflow-y: auto; }
+   selected server (no server-icon header block). Wrapped in
+   .app-shell-with-topbar so the picker screen gets the same sticky
+   top-right bot status pip as the dashboard screen, instead of no
+   status indicator at all outside a server's dashboard. */
+.app-shell-with-topbar { display: flex; flex-direction: column; height: 100vh; }
+.app-shell { display: grid; grid-template-columns: 252px 1fr; flex: 1; min-height: 0; }
+.app-sidebar { border-right: 1px solid var(--panel-border); padding: 18px 12px; background: var(--sidebar-bg); display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
 .app-sidebar-brand { display: flex; align-items: center; gap: 9px; padding: 8px 8px 16px; margin-bottom: 6px; border-bottom: 1px solid var(--panel-border); flex-shrink: 0; }
 .app-sidebar-spacer { flex: 1; min-height: 12px; }
-.app-main { overflow-y: auto; height: 100vh; padding: 26px 30px 60px; max-width: 1140px; }
+/* Width unconstrained (see the matching .dash-main note above) so
+   picker-panel content — server grid, My Tickets table, Admin Panel —
+   fills the full available pane instead of stopping at a fixed
+   max-width and leaving empty space beside it. */
+.app-main { overflow-y: auto; height: 100%; padding: 26px 30px 60px; }
 .nav-item.premium { color: #f5b942; }
 .nav-item.premium:hover { background: rgba(245,185,66,.1); color: #f5b942; }
 .nav-item.premium.active { background: rgba(245,185,66,.14); color: #f5b942; }
@@ -297,10 +313,17 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--v
 .dc-dropdown-trigger i { color: var(--text-dim); font-size: 15px; flex-shrink: 0; }
 .dc-dropdown-trigger-content { display: flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dc-dropdown-placeholder { color: var(--text-dim); }
-.dc-dropdown-panel { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 200; background: var(--panel-solid); border: 1px solid var(--panel-border); border-radius: 10px; box-shadow: 0 12px 30px -8px rgba(0,0,0,.5); max-height: 280px; display: flex; flex-direction: column; }
+.dc-dropdown-panel { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 200; background: var(--panel-solid); border: 1px solid var(--panel-border); border-radius: 10px; box-shadow: 0 12px 30px -8px rgba(0,0,0,.5); max-height: 280px; display: flex; flex-direction: column; overflow: hidden; }
 .dc-dropdown-search { border: none; border-bottom: 1px solid var(--panel-border); border-radius: 10px 10px 0 0; background: transparent; padding: 10px 12px; flex-shrink: 0; }
 .dc-dropdown-search:focus { outline: none; border-color: var(--panel-border); }
-.dc-dropdown-list { overflow-y: auto; padding: 5px; border-radius: 0 0 9px 9px; scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; }
+/* min-height:0 is required on a flex child that needs to scroll — without
+   it, a flex item's default min-height is "auto" (its own content size),
+   which lets the list grow past the panel's max-height instead of
+   shrinking to the remaining space and scrolling internally. That's what
+   made long channel/role lists spill out below the dropdown's rounded
+   border with no visible scrollbar, as if the panel were just a plain
+   unstyled list rather than a contained, scrollable box. */
+.dc-dropdown-list { flex: 1; min-height: 0; overflow-y: auto; padding: 5px; border-radius: 0 0 9px 9px; scrollbar-width: thin; scrollbar-color: var(--panel-border) transparent; }
 .dc-dropdown-list::-webkit-scrollbar { width: 8px; }
 .dc-dropdown-list::-webkit-scrollbar-track { background: transparent; }
 .dc-dropdown-list::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 999px; }
@@ -346,7 +369,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--v
 footer.site-footer { text-align: center; padding: 24px; color: var(--text-dim); font-size: 11.5px; }
 
 /* ---------- Wizard (panel builder) ---------- */
-.wizard-steps { display: flex; align-items: center; gap: 10px; margin-bottom: 26px; flex-wrap: wrap; }
+.wizard-steps { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .wizard-step { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
 .wizard-step-num { width: 24px; height: 24px; border-radius: 50%; background: var(--input-bg); border: 1px solid var(--panel-border); display: grid; place-items: center; font-size: 11.5px; font-weight: 700; flex-shrink: 0; }
 .wizard-step.done .wizard-step-num { background: var(--violet); border-color: var(--violet); color: #fff; }
@@ -354,12 +377,28 @@ footer.site-footer { text-align: center; padding: 24px; color: var(--text-dim); 
 .wizard-step.active { color: var(--text); font-weight: 600; }
 .wizard-step.active .wizard-step-num { border-color: var(--violet); color: var(--violet); }
 .wizard-sep { width: 24px; height: 1px; background: var(--panel-border); flex-shrink: 0; }
-.wizard-body { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.wizard-body { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; max-width: 1040px; margin: 0 auto; }
 .wizard-body.single { grid-template-columns: 1fr; max-width: 620px; }
 .preview-label { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: var(--text-dim); margin-bottom: 10px; text-transform: uppercase; letter-spacing: .03em; }
 .preview-label i { color: var(--violet); font-size: 14px; }
-.wizard-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 22px; gap: 14px; }
+.wizard-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 22px; gap: 14px; max-width: 1040px; margin-left: auto; margin-right: auto; }
 .wizard-error { color: var(--red); font-size: 12.5px; flex: 1; text-align: center; }
+
+/* ---------- Panel builder full-page wizard shell ----------
+   Matches the reference layout: a breadcrumb up top, then a row with
+   Exit on the left, the step indicator centered, and Help on the
+   right — replacing the module's own "TICKET TOOL" header/tab bar
+   while the wizard is open (see startWizard/renderWizard in
+   ticket-tool.js, which render into the full #module-root instead of
+   just the "Ticket Panel" tab's own body). */
+.wiz-breadcrumb { font-size: 12.5px; color: var(--text-dim); margin-bottom: 22px; display: flex; align-items: center; gap: 6px; }
+.wiz-breadcrumb i { font-size: 13px; }
+.wiz-breadcrumb b { color: var(--text); font-weight: 600; }
+.wiz-topbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; margin-bottom: 30px; gap: 14px; }
+.wiz-topbar .wizard-steps { justify-content: center; }
+.wiz-exit, .wiz-help { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; color: var(--text-dim); font-size: 13.5px; font-weight: 600; cursor: pointer; padding: 6px 4px; }
+.wiz-exit:hover, .wiz-help:hover { color: var(--text); }
+.wiz-help { justify-self: end; }
 
 /* ---------- Discord-style embed preview ---------- */
 .embed-msg { background: var(--panel-solid); border: 1px solid var(--panel-border); border-radius: 10px; padding: 16px; }
