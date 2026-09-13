@@ -42,22 +42,31 @@
 
 <!-- ============ SERVER PICKER ============ -->
 <section id="screen-picker" class="screen">
-  <div class="app-shell">
-    <nav class="app-sidebar" id="picker-sidebar">
-      <div class="app-sidebar-brand"><div class="brand-glyph">DC</div><strong style="font-size:13.5px">Dungeon Crawlers</strong></div>
-      <div class="nav-section-label">Navigation</div>
-      <div class="nav-item active" data-picker-panel="dashboard"><i class="ti ti-home"></i> Dashboard</div>
-      <div class="nav-item" data-picker-panel="my-tickets"><i class="ti ti-ticket"></i> My Tickets</div>
-      <div class="nav-item premium" data-picker-panel="premium"><i class="ti ti-crown"></i> Premium</div>
-      <!-- Admin Panel is intentionally not a sidebar entry — it's reachable
-           only from the profile menu at the bottom of this sidebar, and
-           only for the bot owner or a granted admin (see maybeShowAdminPanelButton). -->
-      <div class="app-sidebar-spacer"></div>
-      <div id="picker-sidebar-bottom"></div>
-    </nav>
-    <main class="app-main">
-      <div id="picker-panel-root"></div>
-    </main>
+  <div class="app-shell-with-topbar">
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="brand-row" style="margin-bottom:0"><div class="brand-glyph">DC</div>Dungeon Crawlers</div>
+      </div>
+      <div class="topbar-right">
+        <span class="status-pip checking" id="picker-status-pip"><span class="status-dot"></span>Checking…</span>
+      </div>
+    </div>
+    <div class="app-shell">
+      <nav class="app-sidebar" id="picker-sidebar">
+        <div class="nav-section-label">Navigation</div>
+        <div class="nav-item active" data-picker-panel="dashboard"><i class="ti ti-home"></i> Dashboard</div>
+        <div class="nav-item" data-picker-panel="my-tickets"><i class="ti ti-ticket"></i> My Tickets</div>
+        <div class="nav-item premium" data-picker-panel="premium"><i class="ti ti-crown"></i> Premium</div>
+        <!-- Admin Panel is intentionally not a sidebar entry — it's reachable
+             only from the profile menu at the bottom of this sidebar, and
+             only for the bot owner or a granted admin (see maybeShowAdminPanelButton). -->
+        <div class="app-sidebar-spacer"></div>
+        <div id="picker-sidebar-bottom"></div>
+      </nav>
+      <main class="app-main">
+        <div id="picker-panel-root"></div>
+      </main>
+    </div>
   </div>
 </section>
 
