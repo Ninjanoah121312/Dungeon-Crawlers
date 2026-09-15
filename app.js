@@ -1,12 +1,12 @@
 // ============================================================
-// Dungeon Crawlers — frontend app logic
+// NEXORA — frontend app logic
 // Static site (GitHub Pages) talking to:
 //   1) Discord's OAuth + REST API directly (PKCE, no secret needed here)
 //   2) Your own hosted bot (bot/bot.js) over CFG.LOCAL_BOT_URL
 //
 // URL shape (extended router):
 //   /                                        landing
-//   /dashboard | /my-tickets | /premium      picker screens
+//   /dashboard | /my-tickets | /my-servers | /premium   picker screens
 //   /status                                  status page
 //   /servers/:guildId/:moduleId              a module's default tab
 //   /servers/:guildId/:moduleId/:tab         a module's named sub-tab
@@ -40,6 +40,7 @@ const routes = {
       if (parts[1] === "ticket" && parts[2] && parts[3]) return { screen: "picker", panel: "my-tickets", myTicketGuildId: parts[2], myTicketId: parts[3] };
       return { screen: "picker", panel: "my-tickets" };
     }
+    if (parts[0] === "my-servers") return { screen: "picker", panel: "my-servers" };
     if (parts[0] === "premium") return { screen: "picker", panel: "premium" };
     if (parts[0] === "admin") return { screen: "picker", panel: "admin" };
     if (parts[0] === "share" && parts[1]) return { screen: "share", shareId: parts[1] };
@@ -246,9 +247,16 @@ function isAdmin(guild) {
 // Bot bridge
 // ============================================================
 async function pingLocalBot() {
+  const startedAt = performance.now();
   try {
     const res = await fetch(`${CFG.LOCAL_BOT_URL}/status`, { signal: AbortSignal.timeout(8000) });
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      // Round-trip time for this exact request — the only place we can
+      // measure latency from, since the bot itself doesn't report one.
+      data.latencyMs = Math.round(performance.now() - startedAt);
+      return data;
+    }
   } catch { /* fall through to root check below */ }
   try {
     await fetch(`${CFG.LOCAL_BOT_URL}/`, { signal: AbortSignal.timeout(8000) });
@@ -283,31 +291,54 @@ async function api(path, options = {}) {
 }
 
 // ============================================================
-// Theme
+// Theme — #18: three-way Light / Dark / System selector, replacing the
+// old two-way on/off toggle. "system" tracks prefers-color-scheme live
+// (via a media query listener) rather than being resolved once at
+// apply-time, so the page follows the OS if the person leaves it set
+// to System and changes their OS theme later.
 // ============================================================
+const systemThemeQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null;
+function resolveSystemTheme() { return systemThemeQuery && systemThemeQuery.matches ? "light" : "dark"; }
 function applyTheme(theme) {
-  document.body.setAttribute("data-theme", theme);
+  // theme is the person's PREFERENCE: "light" | "dark" | "system".
+  // The actual attribute painted on <body> is always a concrete
+  // "light"/"dark" — "system" resolves to whichever the OS reports.
+  const resolved = theme === "system" ? resolveSystemTheme() : theme;
+  document.body.setAttribute("data-theme", resolved);
   localStorage.setItem(LS.theme, theme);
   document.querySelectorAll("[id^=btn-theme]").forEach(btn => {
-    btn.innerHTML = theme === "dark" ? `<i class="ti ti-moon"></i>` : `<i class="ti ti-sun"></i>`;
+    btn.innerHTML = resolved === "dark" ? `<i class="ti ti-moon"></i>` : `<i class="ti ti-sun"></i>`;
   });
 }
-function toggleTheme() { applyTheme(document.body.getAttribute("data-theme") === "dark" ? "light" : "dark"); }
+function getThemePreference() { return localStorage.getItem(LS.theme) || "system"; }
+if (systemThemeQuery) {
+  systemThemeQuery.addEventListener("change", () => { if (getThemePreference() === "system") applyTheme("system"); });
+}
 
-// Shared bottom-of-sidebar block: the dark/light toggle sits above
-// Status (both styled as identical rows via .nav-item), then the
-// logged-in user's profile chip with its Profile/Admin Panel/Log out
-// menu.
+// Shared bottom-of-sidebar block: the theme picker sits above
+// Status, then the logged-in user's profile chip with its
+// Profile/Admin Panel/Log out menu.
 function renderSidebarBottom(slotId) {
   const slot = document.getElementById(slotId);
   if (!slot) return;
   const session = getSession();
-  const isDark = document.body.getAttribute("data-theme") !== "light";
+  const currentPref = getThemePreference();
+  const THEME_OPTIONS = [
+    { id: "light", label: "Light", icon: "ti-sun" },
+    { id: "dark", label: "Dark", icon: "ti-moon" },
+    { id: "system", label: "System", icon: "ti-device-desktop" },
+  ];
+  const currentOpt = THEME_OPTIONS.find(o => o.id === currentPref) || THEME_OPTIONS[1];
   slot.innerHTML = `
     <div class="sidebar-bottom">
-      <div class="nav-item sidebar-theme-row">
-        <i class="ti ${isDark ? "ti-moon" : "ti-sun"}"></i> <span class="sidebar-theme-label">${isDark ? "Dark" : "Light"} mode</span>
-        <button class="toggle sb-theme-toggle ${isDark ? "on" : ""}" aria-label="Toggle theme"></button>
+      <div class="theme-picker-anchor">
+        <div class="nav-item sidebar-theme-row theme-picker-trigger">
+          <i class="ti ${currentOpt.icon}"></i> <span class="sidebar-theme-label">${currentOpt.label}</span>
+          <i class="ti ti-chevron-up" style="margin-left:auto;color:var(--text-dim);font-size:14px"></i>
+        </div>
+        <div class="theme-picker-menu" style="display:none">
+          ${THEME_OPTIONS.map(o => `<button class="theme-picker-item ${o.id === currentPref ? "active" : ""}" data-theme-opt="${o.id}"><i class="ti ${o.icon}"></i> ${o.label}</button>`).join("")}
+        </div>
       </div>
       <a href="#" class="nav-item sb-status-link"><i class="ti ti-activity"></i> Status</a>
       <div class="sidebar-profile sb-profile-trigger">
@@ -329,7 +360,8 @@ function renderSidebarBottom(slotId) {
   maybeShowAdminPanelButton(slot);
 
   const statusLink = slot.querySelector(".sb-status-link");
-  const themeToggle = slot.querySelector(".sb-theme-toggle");
+  const themeTrigger = slot.querySelector(".theme-picker-trigger");
+  const themeMenu = slot.querySelector(".theme-picker-menu");
   const menu = slot.querySelector(".sb-profile-menu");
   const trigger = slot.querySelector(".sb-profile-trigger");
   const profileBtn = slot.querySelector(".sb-profile-btn");
@@ -352,14 +384,29 @@ function renderSidebarBottom(slotId) {
     routes.go(routes.moduleUrl(currentGuild.id, "status"));
     enterDashboard("status");
   });
-  themeToggle.addEventListener("click", (e) => {
-    toggleTheme();
-    e.currentTarget.classList.toggle("on");
-    const isDarkNow = document.body.getAttribute("data-theme") !== "light";
-    const row = slot.querySelector(".sidebar-theme-row");
-    row.querySelector("i").className = `ti ${isDarkNow ? "ti-moon" : "ti-sun"}`;
-    row.querySelector(".sidebar-theme-label").textContent = `${isDarkNow ? "Dark" : "Light"} mode`;
+
+  function closeThemeMenuOnOutsideClick(e) {
+    if (!themeMenu.contains(e.target) && !themeTrigger.contains(e.target)) {
+      themeMenu.style.display = "none";
+      document.removeEventListener("click", closeThemeMenuOnOutsideClick, true);
+    }
+  }
+  themeTrigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isOpen = themeMenu.style.display !== "none";
+    if (isOpen) { themeMenu.style.display = "none"; document.removeEventListener("click", closeThemeMenuOnOutsideClick, true); }
+    else { themeMenu.style.display = "block"; document.addEventListener("click", closeThemeMenuOnOutsideClick, true); }
   });
+  themeMenu.querySelectorAll("[data-theme-opt]").forEach(btn => btn.addEventListener("click", () => {
+    applyTheme(btn.dataset.themeOpt);
+    themeMenu.style.display = "none";
+    document.removeEventListener("click", closeThemeMenuOnOutsideClick, true);
+    // Repaint every sidebar-bottom slot currently in the DOM so the
+    // trigger's own label/icon and the menu's "active" state update
+    // immediately, without needing a full screen re-render.
+    ["picker-sidebar-bottom", "dash-sidebar-bottom"].forEach(id => { if (document.getElementById(id)) renderSidebarBottom(id); });
+  }));
+
   function closeMenuOnOutsideClick(e) {
     if (!menu.contains(e.target) && !trigger.contains(e.target)) {
       menu.style.display = "none";
@@ -402,7 +449,7 @@ async function maybeShowAdminPanelButton(slot) {
   if (adminEligibilityCache) btn.style.display = "flex";
 }
 
-applyTheme(localStorage.getItem(LS.theme) || "dark");
+applyTheme(getThemePreference());
 
 // ============================================================
 // Small render helpers
@@ -426,8 +473,15 @@ function formatUptime(sec) {
 function loadingBlock(msg) { return `<div class="loading-wrap"><div class="spinner"></div><div>${msg || "Loading…"}</div></div>`; }
 function renderStatusPip(el, botInfo) {
   el.classList.remove("online", "offline", "checking");
-  if (botInfo && botInfo.online) { el.classList.add("online"); el.innerHTML = `<span class="status-dot"></span>Bot online`; }
-  else { el.classList.add("offline"); el.innerHTML = `<span class="status-dot"></span>Bot Servers down`; }
+  if (botInfo && botInfo.online) {
+    el.classList.add("online");
+    const latency = botInfo.latencyMs != null ? `${botInfo.latencyMs}ms` : "—";
+    const uptime = formatUptime(botInfo.uptimeSeconds);
+    el.innerHTML = `<span class="status-dot"></span>Bot online <span class="status-pip-sep">·</span> ${latency} <span class="status-pip-sep">·</span> up ${uptime}`;
+  } else {
+    el.classList.add("offline");
+    el.innerHTML = `<span class="status-dot"></span>Bot Servers down`;
+  }
 }
 function timeAgoGlobal(iso) {
   if (!iso) return "—";
@@ -556,6 +610,7 @@ function paintPickerNav() {
 async function renderPickerPanel(panel) {
   const root = document.getElementById("picker-panel-root");
   if (panel === "my-tickets") return renderMyTicketsPanel(root);
+  if (panel === "my-servers") return renderMyServersPanel(root);
   if (panel === "premium") return renderPremiumPanel(root);
   if (panel === "admin") return renderAdminPanel(root);
   return renderDashboardPanel(root);
@@ -563,41 +618,41 @@ async function renderPickerPanel(panel) {
 
 async function renderDashboardPanel(root) {
   root.innerHTML = `
-    <h1 class="picker-heading">Your servers</h1>
-    <p class="picker-sub">Servers where you have Administrator permissions.</p>
+    <div class="dash-header">
+      <div><h1 class="picker-heading">Your Servers</h1><p class="picker-sub">Manage tickets and settings for your Discord servers</p></div>
+      <div class="dash-header-actions">
+        <button class="btn btn-ghost btn-small" id="ds-refresh-btn"><i class="ti ti-refresh"></i> Refresh Servers</button>
+        <a class="btn btn-primary btn-small" href="${inviteUrl()}" target="_blank" rel="noopener"><i class="ti ti-plus"></i> Add Bot</a>
+      </div>
+    </div>
+    <div class="servers-search-row">
+      <input type="text" class="search-input" id="ds-search" placeholder="Search servers…">
+    </div>
+    <p class="field-hint" id="ds-count" style="margin-bottom:14px">Loading…</p>
     <div class="server-grid" id="server-grid">${loadingBlock("Loading your servers…")}</div>`;
-  const grid = document.getElementById("server-grid");
-  const session = getSession();
 
-  try {
-    const guilds = await fetchMyGuilds(session.token);
-    const admin = guilds.filter(isAdmin);
-    if (admin.length === 0) {
-      grid.innerHTML = `<div class="empty-state"><i class="ti ti-folder-off glyph"></i>No servers found where you have Administrator permission.</div>`;
-      return;
-    }
-    const botGuildIds = new Set((botInfoCache?.guilds || []).map(g => g.id));
-    const sorted = [...admin].sort((a, b) => {
-      const aHas = botGuildIds.has(a.id), bHas = botGuildIds.has(b.id);
-      if (aHas !== bHas) return aHas ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-    grid.innerHTML = sorted.map(g => {
-      const hasBot = botGuildIds.has(g.id);
-      const iconHtml = g.icon ? `<img src="https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png" alt="">` : initials(g.name);
-      const roleBadge = g.owner ? `<span class="role-badge owner"><i class="ti ti-crown"></i> Owner</span>` : `<span class="role-badge admin"><i class="ti ti-shield"></i> Admin</span>`;
-      return `
-        <div class="server-card ${hasBot ? "" : "bot-absent"}">
-          <div class="server-icon">${iconHtml}</div>
-          <div class="server-name">${escapeHtml(g.name)}</div>
-          <div class="server-meta">${roleBadge} ${hasBot ? "" : "· Bot not added"}</div>
-          <div class="server-card-actions">
-            ${hasBot
-              ? `<button class="btn btn-primary btn-small" data-open-dash="${g.id}" data-name="${escapeHtml(g.name)}" data-icon="${g.icon || ""}">Dashboard</button>`
-              : `<a class="btn btn-primary btn-small" target="_blank" rel="noopener" href="${inviteUrl(g.id)}"><i class="ti ti-plus"></i> Invite</a>`}
-          </div>
-        </div>`;
-    }).join("");
+  const grid = document.getElementById("server-grid");
+  const countEl = document.getElementById("ds-count");
+  const session = getSession();
+  let sorted = [];
+
+  function cardHtml(g, hasBot) {
+    const iconHtml = g.icon ? `<img src="https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png" alt="">` : initials(g.name);
+    const roleBadge = g.owner ? `<span class="role-badge owner"><i class="ti ti-crown"></i> Owner</span>` : `<span class="role-badge admin"><i class="ti ti-shield"></i> Admin</span>`;
+    return `
+      <div class="server-card ${hasBot ? "" : "bot-absent"}" data-server-name="${escapeHtml(g.name.toLowerCase())}">
+        <div class="server-icon">${iconHtml}</div>
+        <div class="server-name">${escapeHtml(g.name)}</div>
+        <div class="server-meta">${roleBadge} ${hasBot ? "" : "· Bot not added"}</div>
+        <div class="server-card-actions">
+          ${hasBot
+            ? `<button class="btn btn-primary btn-small" data-open-dash="${g.id}" data-name="${escapeHtml(g.name)}" data-icon="${g.icon || ""}">Manage Server</button>`
+            : `<a class="btn btn-primary btn-small" target="_blank" rel="noopener" href="${inviteUrl(g.id)}"><i class="ti ti-plus"></i> Begin setup</a>`}
+        </div>
+      </div>`;
+  }
+
+  function wireDashButtons() {
     grid.querySelectorAll("[data-open-dash]").forEach(btn => {
       btn.addEventListener("click", () => {
         currentGuild = { id: btn.dataset.openDash, name: btn.dataset.name, icon: btn.dataset.icon };
@@ -605,9 +660,61 @@ async function renderDashboardPanel(root) {
         enterDashboard("ticket-tool");
       });
     });
+  }
+
+  async function loadAndPaint() {
+    const guilds = await fetchMyGuilds(session.token);
+    const admin = guilds.filter(isAdmin);
+    if (admin.length === 0) {
+      grid.innerHTML = `<div class="empty-state"><i class="ti ti-folder-off glyph"></i>No servers found where you have Administrator permission.</div>`;
+      countEl.textContent = "";
+      return;
+    }
+    const botGuildIds = new Set((botInfoCache?.guilds || []).map(g => g.id));
+    sorted = [...admin].sort((a, b) => {
+      const aHas = botGuildIds.has(a.id), bHas = botGuildIds.has(b.id);
+      if (aHas !== bHas) return aHas ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    const activeCount = sorted.filter(g => botGuildIds.has(g.id)).length;
+    countEl.textContent = `${activeCount} active · ${sorted.length} available`;
+    grid.innerHTML = sorted.map(g => cardHtml(g, botGuildIds.has(g.id))).join("");
+    wireDashButtons();
+  }
+
+  try {
+    await loadAndPaint();
   } catch {
     grid.innerHTML = `<div class="empty-state">Couldn't load your servers. Try logging in again.</div>`;
+    countEl.textContent = "";
+    return;
   }
+
+  document.getElementById("ds-search").addEventListener("input", (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    grid.querySelectorAll(".server-card[data-server-name]").forEach(card => {
+      card.style.display = card.dataset.serverName.includes(q) ? "" : "none";
+    });
+  });
+
+  // #13: Refresh Servers — re-fetches guild membership and bot-presence
+  // data and repaints the grid in place, without a full page reload.
+  // The button shows a brief spinning-icon "working" state so it's
+  // clear the click registered while the requests are in flight.
+  const refreshBtn = document.getElementById("ds-refresh-btn");
+  refreshBtn.addEventListener("click", async () => {
+    refreshBtn.disabled = true;
+    refreshBtn.classList.add("btn-refreshing");
+    try {
+      await refreshHeroStatus();
+      await loadAndPaint();
+    } catch (e) {
+      await DCModal.alert(`Couldn't refresh servers: ${e.message}`);
+    } finally {
+      refreshBtn.disabled = false;
+      refreshBtn.classList.remove("btn-refreshing");
+    }
+  });
 }
 
 function renderPremiumPanel(root) {
@@ -697,7 +804,10 @@ async function paintAdminDashboard(root, session) {
       <div id="admin-guilds-section"></div>
     </div>
     <div class="config-section" style="margin-top:18px">
-      <h3>Ticket search</h3>
+      <div class="dash-header" style="margin-bottom:4px">
+        <h3 style="margin:0">Ticket search</h3>
+        <button class="btn btn-ghost btn-small" id="admin-ticket-refresh-btn"><i class="ti ti-refresh"></i> Refresh Tickets</button>
+      </div>
       <div class="hint">Find any ticket across every server by its number, subject, or who opened/claimed/closed it.</div>
       <input type="text" class="search-input" id="admin-ticket-search" placeholder="Search by ticket number, subject, or user…" style="width:100%;margin-bottom:10px">
       <div id="admin-ticket-search-results"></div>
@@ -837,6 +947,71 @@ async function paintAdminAdminsList() {
   }
 }
 
+// Renders the Admin Panel's inline ticket detail view (#6: opened
+// directly inside the Admin Panel, never redirecting the admin out to
+// My Tickets) including the viewers list (#7).
+async function openAdminTicketDetail(guildId, ticketId) {
+  const root = document.getElementById("picker-panel-root");
+  root.innerHTML = `
+    <button class="btn btn-ghost btn-small" id="admin-ticket-back"><i class="ti ti-arrow-left"></i> Back to Admin Panel</button>
+    <div id="admin-ticket-detail-body" style="margin-top:16px">${loadingBlock("Loading ticket…")}</div>`;
+  document.getElementById("admin-ticket-back").addEventListener("click", () => renderAdminPanel(root));
+  const body = document.getElementById("admin-ticket-detail-body");
+  try {
+    const data = await adminApi(`/admin/guilds/${guildId}/tickets/${ticketId}`);
+    paintAdminTicketDetail(body, guildId, ticketId, data);
+  } catch (e) {
+    body.innerHTML = `<div class="empty-state"><i class="ti ti-alert-triangle glyph"></i>Couldn't load this ticket: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function userDisplayHtml(profile, fallbackId) {
+  const name = profile?.displayName || profile?.username || fallbackId || "Unknown";
+  const avatar = profile?.avatarUrl || "https://cdn.discordapp.com/embed/avatars/0.png";
+  return `<span class="user-display"><img class="user-display-avatar" src="${escapeHtml(avatar)}" alt=""><span class="user-display-name">${escapeHtml(name)}</span></span>`;
+}
+
+function paintAdminTicketDetail(body, guildId, ticketId, data) {
+  const { ticket, messages, viewers, opener } = data;
+  body.innerHTML = `
+    <div class="ticket-panel-card">
+      <div class="ticket-panel-card-header">
+        <span class="ticket-panel-card-title">${escapeHtml(ticket.subject || "No subject")} <span class="field-hint" style="font-weight:400">#${escapeHtml(String(ticket.number ?? ticket.id))}</span></span>
+        <span class="badge badge-${ticket.status}">${ticket.status}</span>
+      </div>
+      <div class="ticket-panel-card-body">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="ticket-info-label" style="margin-bottom:0">Author</span> ${userDisplayHtml(opener, ticket.openedById)}</div>
+        ${messages.length === 0
+          ? `<div class="empty-state"><i class="ti ti-message-off glyph"></i>No messages were sent in this ticket.</div>`
+          : messages.map(m => `
+            <div class="msg-container">
+              <img class="msg-container-avatar" src="${m.authorAvatar ? escapeHtml(m.authorAvatar) : "https://cdn.discordapp.com/embed/avatars/0.png"}" alt="">
+              <div class="msg-container-body">
+                <div class="msg-container-meta">
+                  <span class="msg-container-author">${escapeHtml(m.authorName)}</span>
+                  ${m.authorIsStaff ? `<span class="staff-tag">STAFF</span>` : ""}
+                  <span class="msg-container-time">${new Date(m.createdAt).toLocaleString()}</span>
+                </div>
+                <div class="msg-container-content">${escapeHtml(m.content) || `<span class="field-hint">(no text content)</span>`}</div>
+              </div>
+            </div>`).join("")}
+      </div>
+    </div>
+    <div class="ticket-panel-card">
+      <div class="ticket-panel-card-header"><span class="ticket-panel-card-title"><i class="ti ti-eye"></i> Viewers</span></div>
+      <div class="ticket-panel-card-body">
+        ${viewers.length === 0 ? `<div class="empty-state">No one has viewed this ticket yet.</div>` : `
+          <div class="ticket-viewers-list">
+            ${viewers.map(v => `
+              <div class="ticket-viewer-row">
+                ${userDisplayHtml(v, v.userId)}
+                <span class="ticket-viewer-time">${new Date(v.viewedAt).toLocaleString()}</span>
+              </div>`).join("")}
+          </div>`}
+      </div>
+    </div>`;
+}
+
 function wireAdminTicketSearch() {
   const input = document.getElementById("admin-ticket-search");
   const resultsSlot = document.getElementById("admin-ticket-search-results");
@@ -856,7 +1031,7 @@ function wireAdminTicketSearch() {
       <div class="ticket-table">
         <div class="ticket-row head" style="grid-template-columns:70px 1fr 1fr 100px 120px"><span>#</span><span>Server</span><span>Subject</span><span>Status</span><span>Created</span></div>
         ${tickets.slice(0, 50).map(t => `
-          <div class="ticket-row" style="grid-template-columns:70px 1fr 1fr 100px 120px">
+          <div class="ticket-row ticket-row-clickable" style="grid-template-columns:70px 1fr 1fr 100px 120px" data-admin-ticket="${t.guildId}:${t.id}">
             <span>${escapeHtml(String(t.number ?? t.id))}</span>
             <span>${escapeHtml(t.guildName || "Unknown")}</span>
             <span>${escapeHtml(t.subject || "—")}</span>
@@ -864,8 +1039,21 @@ function wireAdminTicketSearch() {
             <span>${timeAgoGlobal(t.createdAt)}</span>
           </div>`).join("")}
       </div>`;
+    resultsSlot.querySelectorAll("[data-admin-ticket]").forEach(row => row.addEventListener("click", () => {
+      const [guildId, ticketId] = row.dataset.adminTicket.split(":");
+      openAdminTicketDetail(guildId, ticketId);
+    }));
   }
   input.addEventListener("input", () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(runSearch, 300); });
+  // #14: Refresh Tickets in the Admin Panel — re-runs the current
+  // search (or the default unfiltered list) in place.
+  const refreshBtn = document.getElementById("admin-ticket-refresh-btn");
+  if (refreshBtn) refreshBtn.addEventListener("click", async () => {
+    refreshBtn.disabled = true;
+    refreshBtn.classList.add("btn-refreshing");
+    try { await runSearch(); }
+    finally { refreshBtn.disabled = false; refreshBtn.classList.remove("btn-refreshing"); }
+  });
   runSearch();
 }
 
@@ -874,21 +1062,20 @@ function wireAdminTicketSearch() {
 // columns toggle, and a detail page with an Author/Created/Subject/
 // Closed-By info panel plus claim/share-link controls.
 // ============================================================
-const MY_TICKETS_COLUMNS = ["opener", "server", "subject", "content", "status", "created"];
-const MY_TICKETS_COLUMN_LABELS = { opener: "Opened by", server: "Server", subject: "Subject", content: "Content", status: "Status", created: "Created" };
-let myTicketsColumnPrefs = JSON.parse(localStorage.getItem("tk_mt_columns") || "null") || [...MY_TICKETS_COLUMNS];
+// #9: "Opened By" removed from the My Tickets table — the whole list
+// already belongs to the logged-in user, so it added no information.
+// It's kept inside the ticket detail view itself (see the Author row in
+// paintTicketDetailBody below). Column order/set now fixed to match the
+// reference exactly: Server, Subject, Content, Status, Created.
+const MY_TICKETS_COLUMNS = ["server", "subject", "content", "status", "created"];
+const MY_TICKETS_COLUMN_LABELS = { server: "Server", subject: "Subject", content: "Content", status: "Status", created: "Created" };
 
 async function renderMyTicketsPanel(root) {
   root.innerHTML = `
     <div class="dash-header">
       <div><h1 class="picker-heading">My Tickets</h1><p class="picker-sub" id="my-tickets-count">Loading…</p></div>
-      <div class="dropdown-anchor">
-        <button class="btn btn-ghost btn-small" id="mt-columns-btn"><i class="ti ti-layout-columns"></i> Columns <i class="ti ti-chevron-down"></i></button>
-        <div class="dropdown-panel-floating dropdown-panel-align-right" id="mt-columns-panel" style="display:none">
-          <div class="dropdown-panel-title">Toggle columns</div>
-          ${MY_TICKETS_COLUMNS.map(c => `
-            <label class="dc-checkbox-row"><input type="checkbox" data-mt-col="${c}" ${myTicketsColumnPrefs.includes(c) ? "checked" : ""} hidden><span class="dc-checkbox-box"><i class="ti ti-check"></i></span> ${MY_TICKETS_COLUMN_LABELS[c]}</label>`).join("")}
-        </div>
+      <div class="dash-header-actions">
+        <button class="btn btn-ghost btn-small" id="mt-refresh-btn"><i class="ti ti-refresh"></i> Refresh Tickets</button>
       </div>
     </div>
     <p class="field-hint" style="margin-bottom:10px">Use filters below to refine results</p>
@@ -925,9 +1112,11 @@ async function renderMyTicketsPanel(root) {
 
   const session = getSession();
   let tickets = [];
+  async function loadTickets() {
+    tickets = (await api(`/tickets?userId=${session.user.id}`)).tickets || [];
+  }
   try {
-    const d = await api(`/tickets?userId=${session.user.id}`);
-    tickets = d.tickets || [];
+    await loadTickets();
   } catch (e) {
     document.getElementById("my-tickets-list").innerHTML = `<div class="empty-state"><i class="ti ti-alert-triangle glyph"></i>Couldn't load your tickets: ${escapeHtml(e.message)}</div>`;
     document.getElementById("my-tickets-count").textContent = "";
@@ -958,10 +1147,10 @@ async function renderMyTicketsPanel(root) {
   }));
 
   wireFloatingDropdown("mt-server-btn", "mt-server-panel");
-  const uniqueServers = [...new Set(tickets.map(t => t.guildName).filter(Boolean))];
+  function uniqueServersNow() { return [...new Set(tickets.map(t => t.guildName).filter(Boolean))]; }
   function paintServerOptions(query) {
     const q = (query || "").toLowerCase();
-    const opts = uniqueServers.filter(s => s.toLowerCase().includes(q));
+    const opts = uniqueServersNow().filter(s => s.toLowerCase().includes(q));
     document.getElementById("mt-server-options").innerHTML = opts.map(s => `<div class="dropdown-panel-item" data-mt-server-opt="${escapeHtml(s)}">${escapeHtml(s)}</div>`).join("") || `<div class="dropdown-panel-empty">No matches</div>`;
     document.querySelectorAll("[data-mt-server-opt]").forEach(item => item.addEventListener("click", () => {
       filters.server = item.dataset.mtServerOpt;
@@ -974,10 +1163,10 @@ async function renderMyTicketsPanel(root) {
   document.getElementById("mt-server-search").addEventListener("input", (e) => paintServerOptions(e.target.value));
 
   wireFloatingDropdown("mt-subject-btn", "mt-subject-panel");
-  const uniqueSubjects = [...new Set(tickets.map(t => t.subject).filter(Boolean))];
+  function uniqueSubjectsNow() { return [...new Set(tickets.map(t => t.subject).filter(Boolean))]; }
   function paintSubjectOptions(query) {
     const q = (query || "").toLowerCase();
-    const opts = uniqueSubjects.filter(s => s.toLowerCase().includes(q));
+    const opts = uniqueSubjectsNow().filter(s => s.toLowerCase().includes(q));
     document.getElementById("mt-subject-options").innerHTML = opts.map(s => `<div class="dropdown-panel-item" data-mt-subject-opt="${escapeHtml(s)}">${escapeHtml(s)}</div>`).join("") || `<div class="dropdown-panel-empty">No matches</div>`;
     document.querySelectorAll("[data-mt-subject-opt]").forEach(item => item.addEventListener("click", () => {
       filters.subject = item.dataset.mtSubjectOpt;
@@ -996,12 +1185,24 @@ async function renderMyTicketsPanel(root) {
     applyFiltersAndPaint();
   });
 
-  wireFloatingDropdown("mt-columns-btn", "mt-columns-panel");
-  document.querySelectorAll("[data-mt-col]").forEach(cb => cb.addEventListener("change", () => {
-    myTicketsColumnPrefs = [...document.querySelectorAll("[data-mt-col]")].filter(c => c.checked).map(c => c.dataset.mtCol);
-    localStorage.setItem("tk_mt_columns", JSON.stringify(myTicketsColumnPrefs));
-    applyFiltersAndPaint();
-  }));
+  // #14: Refresh Tickets — reloads the ticket list in place (re-fetch +
+  // repaint) without touching filters, scroll position, or the rest of
+  // the dashboard/page around it.
+  const refreshBtn = document.getElementById("mt-refresh-btn");
+  refreshBtn.addEventListener("click", async () => {
+    refreshBtn.disabled = true;
+    refreshBtn.classList.add("btn-refreshing");
+    try {
+      await loadTickets();
+      document.getElementById("my-tickets-count").textContent = `~${tickets.length} ticket${tickets.length === 1 ? "" : "s"} found`;
+      applyFiltersAndPaint();
+    } catch (e) {
+      await DCModal.alert(`Couldn't refresh tickets: ${e.message}`);
+    } finally {
+      refreshBtn.disabled = false;
+      refreshBtn.classList.remove("btn-refreshing");
+    }
+  });
 
   applyFiltersAndPaint();
 }
@@ -1069,9 +1270,10 @@ function paintDateRangePicker(panel, onPick) {
 }
 
 // Shared "opened by" preview cell — avatar, display name, and the raw
-// Discord user id in small dim text underneath. Used by both My Tickets
-// and the Ticket Tool module's own staff-facing ticket list so the two
-// stay visually consistent.
+// Discord user id in small dim text underneath. Used inside a ticket's
+// own detail view (#9 keeps this there) and the Ticket Tool module's
+// own staff-facing ticket list, so both show who opened a ticket the
+// same way.
 function openerPreviewHtml(t) {
   const opener = t.opener;
   const displayName = opener?.displayName || t.openedBy || "Unknown";
@@ -1093,12 +1295,15 @@ function paintMyTicketsList(rows, allTickets) {
     list.innerHTML = `<div class="empty-state"><i class="ti ti-ticket-off glyph"></i>${allTickets.length === 0 ? "You haven't opened any tickets yet." : "No tickets match."}</div>`;
     return;
   }
-  const cols = myTicketsColumnPrefs;
-  const colWidths = { opener: "1.3fr", server: "1fr", subject: "1fr", content: "1.4fr", status: "100px", created: "120px" };
+  // #9: fixed column set/order — Server, Subject, Content, Status,
+  // Created — no "Opened By" column and no per-user column toggle
+  // (removed along with it, since it existed mainly to hide/show that
+  // column).
+  const cols = MY_TICKETS_COLUMNS;
+  const colWidths = { server: "1fr", subject: "1fr", content: "1.6fr", status: "100px", created: "120px" };
   const gridTemplate = cols.map(c => colWidths[c]).join(" ");
   const colLabel = MY_TICKETS_COLUMN_LABELS;
   const cellHtml = {
-    opener: openerPreviewHtml,
     server: (t) => `<span style="display:flex;align-items:center;gap:8px">${t.guildIcon ? `<img src="https://cdn.discordapp.com/icons/${t.guildId}/${t.guildIcon}.png" style="width:20px;height:20px;border-radius:6px" alt="">` : `<span class="server-icon" style="width:20px;height:20px;font-size:9px;margin:0">${initials(t.guildName || "?")}</span>`} ${escapeHtml(t.guildName || "Unknown server")}</span>`,
     subject: (t) => `<span class="cc-trigger-chip" style="background:rgba(139,92,246,.14);color:var(--violet);border-color:rgba(139,92,246,.3)">${escapeHtml(t.subject || "No subject")}</span>`,
     content: (t) => escapeHtml((t.messages && t.messages[0]?.content) || "—").slice(0, 80),
@@ -1132,14 +1337,21 @@ async function openMyTicketDetail(guildId, ticketId, updateUrl = true) {
 // Shared ticket-detail renderer (used by both My Tickets and a module's
 // own ticket view) — the info panel (Author/Created/Subject/Closed By),
 // claimed/unclaimed state, share-link controls, and the transcript.
+//
+// #5: every call now identifies the requester (the logged-in user) so
+// the backend's authorizeTicketAccess() can enforce "owner or staff
+// only" server-side — a denial here renders the same empty-state UI a
+// 404 would, rather than silently falling back to showing the ticket
+// anyway.
 async function paintTicketDetailBody(body, guildId, ticketId) {
+  const session = getSession();
   let data;
-  try { data = await api(`/guilds/${guildId}/tickets/${ticketId}/transcript`); }
+  try { data = await api(`/guilds/${guildId}/tickets/${ticketId}/transcript?requesterId=${session?.user?.id || ""}`); }
   catch (e) {
-    body.innerHTML = `<div class="empty-state"><i class="ti ti-alert-triangle glyph"></i>Couldn't load this ticket: ${escapeHtml(e.message)}</div>`;
+    body.innerHTML = `<div class="empty-state"><i class="ti ti-lock-off glyph"></i>${escapeHtml(e.message || "Couldn't load this ticket.")}</div>`;
     return;
   }
-  const { ticket, messages, hasLog } = data;
+  const { ticket, messages, hasLog, opener, claimer, closer } = data;
   body.innerHTML = `
     <div class="ticket-detail-layout">
       <div class="ticket-detail-main">
@@ -1151,32 +1363,31 @@ async function paintTicketDetailBody(body, guildId, ticketId) {
             : messages.length === 0
               ? `<div class="empty-state"><i class="ti ti-message-off glyph"></i>No messages were sent in this ticket.</div>`
               : messages.map(m => `
-                <div class="transcript-msg ${m.deleted ? "deleted" : ""}">
-                  <img class="transcript-msg-avatar" src="${m.authorAvatar ? escapeHtml(m.authorAvatar) : "https://cdn.discordapp.com/embed/avatars/0.png"}" alt="">
-                  <div class="transcript-msg-body">
-                    <div class="transcript-msg-meta">
-                      <span class="transcript-msg-author">${escapeHtml(m.authorName)}</span>
+                <div class="msg-container ${m.deleted ? "deleted" : ""}">
+                  <img class="msg-container-avatar" src="${m.authorAvatar ? escapeHtml(m.authorAvatar) : "https://cdn.discordapp.com/embed/avatars/0.png"}" alt="">
+                  <div class="msg-container-body">
+                    <div class="msg-container-meta">
+                      <span class="msg-container-author">${escapeHtml(m.authorName)}</span>
                       ${m.authorIsBot ? `<span class="staff-tag" style="background:rgba(125,211,252,.14);color:var(--sky, #7dd3fc)">APP</span>` : ""}
                       ${m.authorIsStaff ? `<span class="staff-tag">STAFF</span>` : ""}
-                      <span class="transcript-msg-time">${new Date(m.createdAt).toLocaleString()}</span>
+                      <span class="msg-container-time">${new Date(m.createdAt).toLocaleString()}</span>
                       ${m.deleted ? `<span class="transcript-msg-deleted-tag"><i class="ti ti-trash"></i> deleted</span>` : ""}
                     </div>
-                    <div class="transcript-msg-content">${escapeHtml(m.content) || `<span class="field-hint">(no text content)</span>`}</div>
+                    <div class="msg-container-content">${escapeHtml(m.content) || `<span class="field-hint">(no text content)</span>`}</div>
                   </div>
                 </div>`).join("")}
         </div>
       </div>
       <div class="ticket-detail-sidebar">
         <h4>Ticket Information</h4>
-        <div class="ticket-info-row"><i class="ti ti-user"></i><div><div class="ticket-info-label">Author</div><div class="ticket-info-val">${escapeHtml(ticket.openedBy || "Unknown")}</div></div></div>
+        <div class="ticket-info-row"><i class="ti ti-user"></i><div><div class="ticket-info-label">Author</div><div class="ticket-info-val">${userDisplayHtml(opener, ticket.openedById || ticket.openedBy)}</div></div></div>
         <div class="ticket-info-row"><i class="ti ti-calendar"></i><div><div class="ticket-info-label">Created</div><div class="ticket-info-val">${timeAgoGlobal(ticket.createdAt)}</div></div></div>
         <div class="ticket-info-row"><i class="ti ti-tag"></i><div><div class="ticket-info-label">Subject</div><div class="ticket-info-val"><span class="cc-trigger-chip" style="background:rgba(139,92,246,.14);color:var(--violet);border-color:rgba(139,92,246,.3)">${escapeHtml(ticket.subject || "—")}</span></div></div></div>
-        <div class="ticket-info-row"><i class="ti ti-lock"></i><div><div class="ticket-info-label">Claimed By</div><div class="ticket-info-val">${ticket.claimedBy ? escapeHtml(ticket.claimedBy) : `<span class="field-hint">Not claimed yet</span>`}</div></div></div>
+        <div class="ticket-info-row"><i class="ti ti-lock"></i><div><div class="ticket-info-label">Claimed By</div><div class="ticket-info-val">${ticket.claimedBy ? userDisplayHtml(claimer, ticket.claimedById || ticket.claimedBy) : `<span class="field-hint">Not claimed yet</span>`}</div></div></div>
         ${ticket.status === "closed" ? `
-        <div class="ticket-info-row"><i class="ti ti-lock-check"></i><div><div class="ticket-info-label">Closed By</div><div class="ticket-info-val">${escapeHtml(ticket.closedBy || "Unknown")}</div><div class="field-hint">${timeAgoGlobal(ticket.closedAt)}</div></div></div>`
+        <div class="ticket-info-row"><i class="ti ti-lock-check"></i><div><div class="ticket-info-label">Closed By</div><div class="ticket-info-val">${userDisplayHtml(closer, ticket.closedById || ticket.closedBy)}</div><div class="field-hint">${timeAgoGlobal(ticket.closedAt)}</div></div></div>`
           : `<div class="field-hint" style="margin-top:8px"><i class="ti ti-lock-open"></i> This ticket hasn't been closed yet.</div>`}
-        <div class="ticket-share-block">
-          <div class="config-row-label" style="margin-bottom:8px">Share link</div>
+        <div class="ticket-share-block" id="ticket-share-block-wrap">
           <div id="ticket-share-controls">${loadingBlock("")}</div>
         </div>
       </div>
@@ -1184,19 +1395,30 @@ async function paintTicketDetailBody(body, guildId, ticketId) {
   paintTicketShareControls(document.getElementById("ticket-share-controls"), guildId, ticketId, ticket);
 }
 
-function paintTicketShareControls(slot, guildId, ticketId, ticket) {
+// #4: share-link controls only render at all when sharing is enabled
+// for this server — while it's off, no share-link UI is shown (not
+// even a disabled state), per "Users should not see share-link
+// functionality" when the setting is off.
+async function paintTicketShareControls(slot, guildId, ticketId, ticket) {
+  let sharingEnabled = false;
+  try { sharingEnabled = (await api(`/guilds/${guildId}/sharing-settings`)).sharingEnabled; } catch { /* default false on failure */ }
+  const wrap = document.getElementById("ticket-share-block-wrap");
+  if (!sharingEnabled) { if (wrap) wrap.style.display = "none"; return; }
+  if (wrap) wrap.style.display = "";
+
+  const session = getSession();
   const shareUrl = ticket.currentShareId ? `${window.location.origin}${CFG.BASE_PATH.replace(/\/$/, "")}/share/${ticket.currentShareId}` : null;
-  slot.innerHTML = shareUrl
+  slot.innerHTML = `<div class="config-row-label" style="margin-bottom:8px">Share link</div>` + (shareUrl
     ? `<div class="dc-share-link"><input type="text" readonly value="${escapeHtml(shareUrl)}" id="ticket-share-url"></div>
        <div class="field-row-inline" style="margin-top:8px">
          <button class="btn btn-ghost btn-small" id="ticket-share-copy"><i class="ti ti-copy"></i> Copy</button>
          <button class="btn btn-ghost btn-small" id="ticket-share-regen"><i class="ti ti-refresh"></i> Regenerate</button>
        </div>`
-    : `<button class="btn btn-primary btn-small" id="ticket-share-create"><i class="ti ti-link"></i> Create share link</button>`;
+    : `<button class="btn btn-primary btn-small" id="ticket-share-create"><i class="ti ti-link"></i> Create share link</button>`);
 
   const createBtn = document.getElementById("ticket-share-create");
   if (createBtn) createBtn.addEventListener("click", async () => {
-    try { await api(`/guilds/${guildId}/tickets/${ticketId}/share`, { method: "POST" }); await refreshShareControls(); }
+    try { await api(`/guilds/${guildId}/tickets/${ticketId}/share`, { method: "POST", body: JSON.stringify({ requesterId: session?.user?.id }) }); await refreshShareControls(); }
     catch (e) { await DCModal.alert(`Couldn't create share link: ${e.message}`); }
   });
   const copyBtn = document.getElementById("ticket-share-copy");
@@ -1208,13 +1430,13 @@ function paintTicketShareControls(slot, guildId, ticketId, ticket) {
   if (regenBtn) regenBtn.addEventListener("click", async () => {
     const ok = await DCModal.confirm("The old link will stop working immediately. Continue?", { title: "Regenerate share link", confirmLabel: "Regenerate" });
     if (!ok) return;
-    try { await api(`/guilds/${guildId}/tickets/${ticketId}/share`, { method: "POST" }); await refreshShareControls(); }
+    try { await api(`/guilds/${guildId}/tickets/${ticketId}/share`, { method: "POST", body: JSON.stringify({ requesterId: session?.user?.id }) }); await refreshShareControls(); }
     catch (e) { await DCModal.alert(`Couldn't regenerate: ${e.message}`); }
   });
 
   async function refreshShareControls() {
     try {
-      const fresh = await api(`/guilds/${guildId}/tickets/${ticketId}/transcript`);
+      const fresh = await api(`/guilds/${guildId}/tickets/${ticketId}/transcript?requesterId=${session?.user?.id || ""}`);
       paintTicketShareControls(slot, guildId, ticketId, fresh.ticket);
     } catch { /* keep old controls visible on failure */ }
   }
@@ -1231,7 +1453,7 @@ async function enterSharePage(shareId) {
     const data = await api(`/share/tickets/${shareId}`);
     const { ticket, guildName, messages } = data;
     root.innerHTML = `
-      <div class="brand-row" style="margin-bottom:18px"><div class="brand-glyph">DC</div>Dungeon Crawlers</div>
+      <div class="brand-row" style="margin-bottom:18px"><div class="brand-glyph">NX</div>NEXORA</div>
       <div class="modal-panel" style="max-width:800px;max-height:none;margin:0 auto">
         <div class="transcript-header">
           <div>
@@ -1258,8 +1480,87 @@ async function enterSharePage(shareId) {
       </div>`;
   } catch (e) {
     root.innerHTML = `
-      <div class="brand-row" style="margin-bottom:18px"><div class="brand-glyph">DC</div>Dungeon Crawlers</div>
+      <div class="brand-row" style="margin-bottom:18px"><div class="brand-glyph">NX</div>NEXORA</div>
       <div class="empty-state"><i class="ti ti-link-off glyph"></i>${escapeHtml(e.message || "This share link is invalid.")}</div>`;
+  }
+}
+
+// ============================================================
+// My Servers (#16) — servers with NEXORA already installed (where the
+// user has the required permissions) and servers where NEXORA can be
+// added (where the user can manage the bot but it isn't installed
+// yet). Servers the user can't manage at all are never shown in
+// either section.
+// ============================================================
+async function renderMyServersPanel(root) {
+  root.innerHTML = `
+    <h1 class="picker-heading">My Servers</h1>
+    <p class="picker-sub">Servers you can manage — with NEXORA installed, and where you can add it.</p>
+    <div id="my-servers-body">${loadingBlock("Loading your servers…")}</div>`;
+  const body = document.getElementById("my-servers-body");
+  const session = getSession();
+  try {
+    const guilds = await fetchMyGuilds(session.token);
+    const manageable = guilds.filter(isAdmin);
+    await refreshHeroStatus();
+    const botGuildIds = new Set((botInfoCache?.guilds || []).map(g => g.id));
+    const withBot = manageable.filter(g => botGuildIds.has(g.id)).sort((a, b) => a.name.localeCompare(b.name));
+    const withoutBot = manageable.filter(g => !botGuildIds.has(g.id)).sort((a, b) => a.name.localeCompare(b.name));
+
+    function cardHtml(g, hasBot) {
+      const iconHtml = g.icon ? `<img src="https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png" alt="">` : initials(g.name);
+      const roleBadge = g.owner ? `<span class="role-badge owner"><i class="ti ti-crown"></i> Owner</span>` : `<span class="role-badge admin"><i class="ti ti-shield"></i> Admin</span>`;
+      return `
+        <div class="server-card ${hasBot ? "" : "bot-absent"}" data-server-name="${escapeHtml(g.name.toLowerCase())}">
+          <div class="server-icon">${iconHtml}</div>
+          <div class="server-name">${escapeHtml(g.name)}</div>
+          <div class="server-meta">${roleBadge}</div>
+          <div class="server-card-actions">
+            ${hasBot
+              ? `<button class="btn btn-primary btn-small" data-open-dash="${g.id}" data-name="${escapeHtml(g.name)}" data-icon="${g.icon || ""}">Dashboard</button>`
+              : `<a class="btn btn-primary btn-small" target="_blank" rel="noopener" href="${inviteUrl(g.id)}"><i class="ti ti-plus"></i> Add NEXORA</a>`}
+          </div>
+        </div>`;
+    }
+
+    body.innerHTML = `
+      <div class="servers-search-row">
+        <input type="text" class="search-input" id="my-servers-search" placeholder="Search your servers…">
+      </div>
+      <div class="my-servers-section">
+        <div class="my-servers-section-title"><i class="ti ti-server-2"></i> Servers with NEXORA <span class="badge badge-open">${withBot.length}</span></div>
+        <div class="server-grid" id="my-servers-with-bot">
+          ${withBot.length ? withBot.map(g => cardHtml(g, true)).join("") : `<div class="empty-state" style="grid-column:1/-1">NEXORA isn't installed on any server you manage yet.</div>`}
+        </div>
+      </div>
+      <div class="my-servers-section">
+        <div class="my-servers-section-title"><i class="ti ti-plus"></i> Servers without NEXORA <span class="badge badge-pending">${withoutBot.length}</span></div>
+        <div class="server-grid" id="my-servers-without-bot">
+          ${withoutBot.length ? withoutBot.map(g => cardHtml(g, false)).join("") : `<div class="empty-state" style="grid-column:1/-1">NEXORA is already on every server you manage.</div>`}
+        </div>
+      </div>`;
+
+    function wireDashButtons() {
+      body.querySelectorAll("[data-open-dash]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          currentGuild = { id: btn.dataset.openDash, name: btn.dataset.name, icon: btn.dataset.icon };
+          routes.go(routes.moduleUrl(currentGuild.id, "ticket-tool"));
+          enterDashboard("ticket-tool");
+        });
+      });
+    }
+    wireDashButtons();
+
+    // #15-style search, scoped to this My Servers view: filters both
+    // sections by server name as the user types, no page reload.
+    document.getElementById("my-servers-search").addEventListener("input", (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      body.querySelectorAll(".server-card[data-server-name]").forEach(card => {
+        card.style.display = card.dataset.serverName.includes(q) ? "" : "none";
+      });
+    });
+  } catch (e) {
+    body.innerHTML = `<div class="empty-state">Couldn't load your servers: ${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -1324,6 +1625,7 @@ function buildContext(extra = {}) {
     // reimplementing its own transcript viewer.
     renderTicketDetail: (container, guildId, ticketId) => paintTicketDetailBody(container, guildId, ticketId),
     openerPreviewHtml,
+    userDisplayHtml,
     navigateToTab: (tab) => { routes.go(routes.moduleUrl(currentGuild.id, currentPanelId, tab)); switchTab(tab); },
     navigateToTicket: (ticketId) => { routes.go(routes.ticketUrl(currentGuild.id, currentPanelId, ticketId)); switchToTicketView(ticketId); },
     ...extra,
@@ -1505,8 +1807,8 @@ function switchTab(tab) {
 
 // ============================================================
 // Status module — colored uptime bar (green/yellow/orange/red by worst
-// incident severity that day) with a click-to-open popover (not a hover
-// tooltip) showing that day's detail.
+// incident severity that day) with a HOVER tooltip (#17 — no click
+// required) showing that day's detail.
 // ============================================================
 async function renderStatusModule(root) {
   await refreshHeroStatus();
@@ -1564,7 +1866,7 @@ async function renderStatusModule(root) {
           </div>`).join("")}
     </div>`;
 
-  wireStatusDayPopover(days, history.incidents);
+  wireStatusDayHoverTooltip(days, history.incidents);
   paintStatusModulesList();
 }
 
@@ -1586,34 +1888,52 @@ async function paintStatusModulesList() {
   }
 }
 
-// Click (not hover) opens a fixed info card — "30 Jun 2026 / No downtime
-// recorded on this day." — via the shared modal system.
-function wireStatusDayPopover(days, incidents) {
+// #17: hover (not click) opens a small fixed-position tooltip that
+// follows the mouse across the bar — "September 12 / Incident: Bot
+// restarted unexpectedly." or "September 13 / No incidents." — and
+// disappears immediately on mouseleave. One tooltip element is reused
+// for the whole bar rather than one per day, repositioned/repainted on
+// each mouseenter.
+function wireStatusDayHoverTooltip(days, incidents) {
   const bar = document.getElementById("status-daybar");
   if (!bar) return;
+
+  let tooltip = document.getElementById("status-day-tooltip");
+  if (!tooltip) {
+    tooltip = document.createElement("div");
+    tooltip.id = "status-day-tooltip";
+    tooltip.className = "status-day-tooltip";
+    document.body.appendChild(tooltip);
+  }
+
+  function positionTooltip(target) {
+    const rect = target.getBoundingClientRect();
+    const tipRect = tooltip.getBoundingClientRect();
+    let left = rect.left + rect.width / 2 - tipRect.width / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - tipRect.width - 8));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${rect.top - tipRect.height - 10}px`;
+  }
+
   bar.querySelectorAll("[data-day-idx]").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
+    el.addEventListener("mouseenter", () => {
       const d = days[+el.dataset.dayIdx];
       const dayIncidents = incidents.filter(i => new Date(i.startedAt).toISOString().slice(0, 10) === d.date);
-      const dateLabel = new Date(d.date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
-      const bodyHtml = `
-        <div class="dc-modal-header"><h3>${dateLabel}</h3></div>
-        <div class="dc-modal-body">
-          ${dayIncidents.length === 0
-            ? `<div class="status-day-ok-row"><i class="ti ti-check"></i> No downtime recorded on this day.</div>`
-            : dayIncidents.map(i => `
-              <div class="status-day-incident-row">
-                <span class="severity-dot severity-${i.severity}"></span>
-                <div>
-                  <div>${formatDuration(i.durationSeconds)} downtime</div>
-                  ${i.note ? `<div class="field-hint" style="margin-top:2px">${escapeHtml(i.note)}</div>` : ""}
-                </div>
-              </div>`).join("")}
-        </div>
-        <div class="dc-modal-footer"><button class="btn btn-ghost btn-small" id="dc-modal-close-only">Close</button></div>`;
-      DCModal.custom(bodyHtml, { maxWidth: "360px", onMount: (r) => r.querySelector("#dc-modal-close-only").addEventListener("click", DCModal.close) });
+      const dateLabel = new Date(d.date).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+      tooltip.innerHTML = `
+        <div class="status-day-tooltip-date">${dateLabel}</div>
+        ${dayIncidents.length === 0
+          ? `<div class="status-day-tooltip-none"><i class="ti ti-check"></i> No incidents.</div>`
+          : dayIncidents.map(i => `
+            <div class="status-day-tooltip-row">
+              <span class="severity-dot severity-${i.severity}" style="margin-top:3px"></span>
+              <span>Incident:<br>${escapeHtml(i.note || `${formatDuration(i.durationSeconds)} downtime`)}</span>
+            </div>`).join("")}`;
+      tooltip.classList.add("visible");
+      positionTooltip(el);
     });
+    el.addEventListener("mousemove", () => positionTooltip(el));
+    el.addEventListener("mouseleave", () => tooltip.classList.remove("visible"));
   });
 }
 
