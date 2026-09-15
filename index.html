@@ -3,9 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dungeon Crawlers — Ticket Module</title>
+<title>NEXORA — Dashboard</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <link rel="stylesheet" href="style.css">
+<script>
+  // Resolve and paint the stored theme preference BEFORE first paint,
+  // inline and blocking, so the page never flashes dark-then-light (or
+  // vice versa) while app.js is still loading. Mirrors exactly what
+  // applyTheme()/getThemePreference() in app.js do — "system" resolves
+  // live against the OS's prefers-color-scheme rather than being
+  // baked in once, same as the rest of the app.
+  (function () {
+    try {
+      var pref = localStorage.getItem("tk_theme") || "system";
+      var resolved = pref === "system"
+        ? (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+        : pref;
+      document.documentElement.setAttribute("data-theme-boot", resolved);
+    } catch (e) { /* localStorage unavailable (privacy mode, etc) — dark stays as the default below */ }
+  })();
+</script>
 </head>
 <body data-theme="dark">
 
@@ -13,7 +30,7 @@
 <section id="screen-landing" class="screen active">
   <div class="landing-wrap">
     <div>
-      <div class="brand-row"><div class="brand-glyph">DC</div>Dungeon Crawlers</div>
+      <div class="brand-row"><div class="brand-glyph">NX</div>NEXORA</div>
       <h1 class="landing-title">Tickets that<br><span class="accent">never fall through</span></h1>
       <p class="landing-sub">Invite the bot, sign in with Discord, and manage every open ticket across your servers from one dashboard.</p>
       <div class="landing-actions">
@@ -27,13 +44,15 @@
         <span class="status-pip checking" id="hero-status-pip"><span class="status-dot"></span>Checking…</span>
       </div>
       <div class="mini-card">
-        <div class="mini-card-label">Bot Servers</div>
-        <div class="mini-card-val" id="hero-bot-url">—</div>
-        <div class="mini-card-grid">
-          <div><div class="mini-card-label">Guilds</div><div class="mini-card-val" id="hero-guild-count">—</div></div>
+        <!-- Four evenly-spaced stat items (see #12): "Guilds" renamed to
+             "Servers", and "Data Store" removed entirely — this used to
+             be an asymmetric "label + 3-item grid" layout; now every
+             item is a peer in one balanced 2x2 grid. -->
+        <div class="mini-card-grid mini-card-grid-4">
+          <div><div class="mini-card-label">Bot Servers</div><div class="mini-card-val" id="hero-bot-url">—</div></div>
+          <div><div class="mini-card-label">Servers</div><div class="mini-card-val" id="hero-guild-count">—</div></div>
           <div><div class="mini-card-label">Uptime</div><div class="mini-card-val" id="hero-uptime">—</div></div>
           <div><div class="mini-card-label">Bot tag</div><div class="mini-card-val" id="hero-bot-tag">—</div></div>
-          <div><div class="mini-card-label">Data store</div><div class="mini-card-val">GitHub</div></div>
         </div>
       </div>
     </div>
@@ -45,7 +64,7 @@
   <div class="app-shell-with-topbar">
     <div class="topbar">
       <div class="topbar-left">
-        <div class="brand-row" style="margin-bottom:0"><div class="brand-glyph">DC</div>Dungeon Crawlers</div>
+        <div class="brand-row" style="margin-bottom:0"><div class="brand-glyph">NX</div>NEXORA</div>
       </div>
       <div class="topbar-right">
         <span class="status-pip checking" id="picker-status-pip"><span class="status-dot"></span>Checking…</span>
@@ -56,6 +75,7 @@
         <div class="nav-section-label">Navigation</div>
         <div class="nav-item active" data-picker-panel="dashboard"><i class="ti ti-home"></i> Dashboard</div>
         <div class="nav-item" data-picker-panel="my-tickets"><i class="ti ti-ticket"></i> My Tickets</div>
+        <div class="nav-item" data-picker-panel="my-servers"><i class="ti ti-server-2"></i> My Servers</div>
         <div class="nav-item premium" data-picker-panel="premium"><i class="ti ti-crown"></i> Premium</div>
         <!-- Admin Panel is intentionally not a sidebar entry — it's reachable
              only from the profile menu at the bottom of this sidebar, and
@@ -120,7 +140,7 @@
      so every popup in the app looks and behaves the same way. -->
 <div id="dc-modal-root"></div>
 
-<footer class="site-footer">Dungeon Crawlers runs on a bot you host yourself.</footer>
+<footer class="site-footer">NEXORA runs on a bot you host yourself.</footer>
 
 <script>
   // GitHub Pages serves static files with long browser cache lifetimes,
